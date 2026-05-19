@@ -79,7 +79,7 @@ class Lead(db.Model, TimestampMixin):
     status = db.Column(db.String(64), default="open", nullable=False)
     source = db.Column(db.String(128))
     preferred_contact_method = db.Column(db.String(64))
-    metadata = db.Column(db.JSON)
+    meta = db.Column(db.JSON)
     notes = db.Column(db.Text)
 
     box_details = db.relationship(
@@ -175,7 +175,7 @@ class OperationalDecision(db.Model, TimestampMixin):
     name = db.Column(db.String(128), nullable=False)
     decision_type = db.Column(db.String(64))
     result = db.Column(db.Text)
-    metadata = db.Column(db.JSON)
+    meta = db.Column(db.JSON)
     status = db.Column(db.String(64), default="pending", nullable=False)
 
     company = db.relationship("Company", back_populates="decisions")
@@ -268,7 +268,7 @@ class WebsiteEvent(db.Model, TimestampMixin):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
     event_type = db.Column(db.String(128), nullable=False)
     page = db.Column(db.String(512))
-    metadata = db.Column(db.JSON)
+    meta = db.Column(db.JSON)
     captured_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     company = db.relationship("Company", back_populates="website_events")
@@ -284,7 +284,7 @@ class SlackMessage(db.Model, TimestampMixin):
     text = db.Column(db.Text)
     event_type = db.Column(db.String(64), default="message")
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    metadata = db.Column(db.JSON)
+    meta = db.Column(db.JSON)
 
 
 class IntegrationLog(db.Model, TimestampMixin):
