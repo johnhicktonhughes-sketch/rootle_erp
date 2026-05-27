@@ -79,6 +79,8 @@ class Lead(db.Model, TimestampMixin):
     status = db.Column(db.String(64), default="open", nullable=False)
     source = db.Column(db.String(128))
     preferred_contact_method = db.Column(db.String(64))
+    crm_system = db.Column(db.String(64), default="attio", nullable=False)
+    crm_record_id = db.Column(db.String(128), unique=True)
     meta = db.Column(db.JSON)
     notes = db.Column(db.Text)
 
@@ -149,6 +151,34 @@ class LeadEstimate(db.Model, TimestampMixin):
     lead = db.relationship("Lead", back_populates="estimates")
     box_detail = db.relationship("LeadBoxDetail", back_populates="estimates")
     box_revision = db.relationship("LeadBoxRevision", back_populates="estimates")
+
+
+class LeadValuation(db.Model, TimestampMixin):
+    __tablename__ = "lead_valuations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    crm_system = db.Column(db.String(64), default="attio", nullable=False)
+    crm_person_record_id = db.Column(db.String(128), nullable=False, index=True)
+    crm_valuation_request_id = db.Column(db.String(128), unique=True)
+    rootle_request_id = db.Column(db.String(128), unique=True, nullable=False)
+    posthog_distinct_id = db.Column(db.String(256))
+    item_categories = db.Column(db.JSON, nullable=False)
+    item_photo_url = db.Column(db.String(1024), nullable=False)
+    valuation_guide_id = db.Column(db.String(128))
+    valuation_guide_url = db.Column(db.String(1024))
+    status = db.Column(db.String(64), default="valuation_requested", nullable=False)
+    current_stage = db.Column(db.String(64), default="item_submitted", nullable=False)
+    source = db.Column(db.String(128))
+    customer_email = db.Column(db.String(256))
+    address_line_1 = db.Column(db.String(256))
+    address_line_2 = db.Column(db.String(256))
+    city = db.Column(db.String(128))
+    postcode = db.Column(db.String(64))
+    country = db.Column(db.String(128))
+    item_submitted_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    contact_details_received_at = db.Column(db.DateTime)
+    stage_3_completed_at = db.Column(db.DateTime)
+    meta = db.Column(db.JSON)
 
 
 class JourneyPhase(db.Model, TimestampMixin):

@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from config import Config
 from database import db
@@ -12,6 +12,17 @@ def create_app(config_class=Config):
     db.init_app(app)
 
     app.register_blueprint(crm_bp, url_prefix="/api")
+
+    @app.after_request
+    def add_cors_headers(response):
+        origin = request.headers.get("Origin")
+        allowed_origins = app.config.get("CORS_ALLOWED_ORIGINS", [])
+        if origin in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
+        return response
 
     @app.route("/")
     def index():

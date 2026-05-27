@@ -13,6 +13,15 @@ class Config:
             "DATABASE_URL environment variable is required for PostgreSQL configuration"
         )
 
+    CORS_ALLOWED_ORIGINS = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "https://rootle-analytics.lovable.app",
+        ).split(",")
+        if origin.strip()
+    ]
+
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JSON_SORT_KEYS = False
     JSONIFY_PRETTYPRINT_REGULAR = True
