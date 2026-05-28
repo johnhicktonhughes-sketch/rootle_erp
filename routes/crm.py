@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 from uuid import uuid4
 
 from flask import Blueprint, jsonify, request
@@ -13,9 +14,12 @@ from models import (
     LeadBoxRevision,
     LeadEstimate,
     LeadValuation,
+    ValuationItemCategory,
 )
 
 crm_bp = Blueprint("crm", __name__)
+
+DEFAULT_VALUATION_ITEMS = ("gold", "silver", "coins")
 
 
 def _required_string(payload, key):
@@ -42,6 +46,46 @@ def _string_list(payload, *keys):
 
 def _valuation_to_dict(valuation):
     return valuation.to_dict()
+
+
+def _category_slug(value):
+    value = str(value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "_", value)
+    return value.strip("_") or None
+
+
+def _category_label(name):
+    return name.replace("_", " ").title()
+
+
+def _ensure_default_valuation_items():
+    existing_count = ValuationItemCategory.query.count()
+    if existing_count:
+        return
+
+    for index, name in enumerate(DEFAULT_VALUATION_ITEMS):
+        db.session.add(
+            ValuationItemCategory(
+                name=name,
+                label=_category_label(name),
+                sort_order=index,
+            )
+        )
+    db.session.commit()
+
+
+def _active_valuation_item_names():
+    _ensure_default_valuation_items()
+    return [
+        item.name
+        for item in ValuationItemCategory.query.filter_by(active=True)
+        .order_by(ValuationItemCategory.sort_order, ValuationItemCategory.label)
+        .all()
+    ]
+
+
+def _valuation_item_to_dict(item):
+    return item.to_dict()
 
 
 @crm_bp.route("/companies", methods=["GET"])
@@ -81,6 +125,89 @@ def create_company():
 def list_journey_phases():
     phases = JourneyPhase.query.order_by(JourneyPhase.order).all()
     return jsonify([phase.to_dict() for phase in phases])
+
+
+@crm_bp.route("/crm/valuation-items", methods=["GET"])
+def list_valuation_items():
+    _ensure_default_valuation_items()
+    include_inactive = request.args.get("include_inactive", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    query = ValuationItemCategory.query
+    if not include_inactive:
+        query = query.filter_by(active=True)
+    items = query.order_by(
+        ValuationItemCategory.sort_order,
+        ValuationItemCategory.label,
+    ).all()
+    return jsonify([_valuation_item_to_dict(item) for item in items])
+
+
+@crm_bp.route("/crm/valuation-items", methods=["POST"])
+def add_valuation_item():
+    payload = request.get_json() or {}
+    name = _category_slug(payload.get("name") or payload.get("item") or payload.get("slug"))
+    label = _required_string(payload, "label")
+    description = _required_string(payload, "description")
+    sort_order = payload.get("sort_order")
+
+    if not name:
+        return jsonify({"error": "missing_required_fields", "fields": ["name"]}), 400
+
+    item = ValuationItemCategory.query.filter_by(name=name).first()
+    status_code = 200
+    if not item:
+        last_item = ValuationItemCategory.query.order_by(
+            ValuationItemCategory.sort_order.desc()
+        ).first()
+        next_sort_order = (last_item.sort_order + 1) if last_item else 0
+        item = ValuationItemCategory(
+            name=name,
+            label=label or _category_label(name),
+            sort_order=next_sort_order,
+        )
+        db.session.add(item)
+        status_code = 201
+
+    item.label = label or item.label or _category_label(name)
+    item.description = description if description is not None else item.description
+    item.active = True
+    if sort_order is not None:
+        try:
+            item.sort_order = int(sort_order)
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_sort_order"}), 400
+
+    db.session.commit()
+
+    try:
+        from attio import ensure_valuation_request_item_options
+
+        ensure_valuation_request_item_options([item.name])
+    except Exception as exc:
+        return (
+            jsonify(
+                {
+                    "item": _valuation_item_to_dict(item),
+                    "warning": "attio_option_sync_failed",
+                    "message": str(exc),
+                }
+            ),
+            status_code,
+        )
+
+    return jsonify({"item": _valuation_item_to_dict(item)}), status_code
+
+
+@crm_bp.route("/crm/valuation-items/<item_name>", methods=["DELETE"])
+def remove_valuation_item(item_name):
+    name = _category_slug(item_name)
+    item = ValuationItemCategory.query.filter_by(name=name).first_or_404()
+    item.active = False
+    db.session.commit()
+    return jsonify({"item": _valuation_item_to_dict(item), "removed": True})
 
 
 @crm_bp.route("/leads", methods=["GET"])
@@ -173,17 +300,21 @@ def submit_item_for_valuation():
     if missing_fields:
         return jsonify({"error": "missing_required_fields", "fields": missing_fields}), 400
 
+    item_categories = [_category_slug(category) for category in item_categories]
+    item_categories = [category for category in item_categories if category]
+    if not item_categories:
+        return jsonify({"error": "missing_required_fields", "fields": ["item_categories"]}), 400
+
+    allowed_categories = _active_valuation_item_names()
     unknown_categories = [
-        category
-        for category in item_categories
-        if category not in {"gold", "silver", "coins"}
+        category for category in item_categories if category not in allowed_categories
     ]
     if unknown_categories:
         return (
             jsonify(
                 {
                     "error": "invalid_item_categories",
-                    "allowed_values": ["gold", "silver", "coins"],
+                    "allowed_values": allowed_categories,
                     "values": unknown_categories,
                 }
             ),

@@ -1,5 +1,5 @@
 API_TITLE = "Rootle ERP API"
-API_VERSION = "0.1.0"
+API_VERSION = "0.2.0"
 
 
 OPENAPI_SPEC = {
@@ -176,7 +176,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests": {
             "post": {
                 "summary": "Create a valuation request",
-                "description": "Creates one ERP LeadValuation and one linked Attio valuation_requests record.",
+                "description": "Creates one ERP LeadValuation and one linked Attio valuation_requests record. Valid item values come from GET /api/crm/valuation-items.",
                 "requestBody": {
                     "required": True,
                     "content": {
@@ -190,17 +190,11 @@ OPENAPI_SPEC = {
                                     "crm_record_id": {"type": "string"},
                                     "items": {
                                         "type": "array",
-                                        "items": {
-                                            "type": "string",
-                                            "enum": ["gold", "silver", "coins"],
-                                        },
+                                        "items": {"type": "string"},
                                     },
                                     "item_categories": {
                                         "type": "array",
-                                        "items": {
-                                            "type": "string",
-                                            "enum": ["gold", "silver", "coins"],
-                                        },
+                                        "items": {"type": "string"},
                                     },
                                     "picture_url": {"type": "string"},
                                     "item_photo_url": {"type": "string"},
@@ -222,6 +216,59 @@ OPENAPI_SPEC = {
                     "400": {"description": "Invalid payload"},
                     "502": {"description": "Attio sync failed"},
                 },
+            }
+        },
+        "/api/crm/valuation-items": {
+            "get": {
+                "summary": "List valid valuation item categories",
+                "parameters": [
+                    {
+                        "name": "include_inactive",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean"},
+                    }
+                ],
+                "responses": {"200": {"description": "Valuation item category list"}},
+            },
+            "post": {
+                "summary": "Add or reactivate a valuation item category",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["name"],
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "label": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "sort_order": {"type": "integer"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Existing item reactivated or updated"},
+                    "201": {"description": "Item created"},
+                    "400": {"description": "Invalid payload"},
+                },
+            },
+        },
+        "/api/crm/valuation-items/{item_name}": {
+            "delete": {
+                "summary": "Remove a valuation item category from the active list",
+                "parameters": [
+                    {
+                        "name": "item_name",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Item removed"}},
             }
         },
         "/api/crm/contact-details": {
@@ -425,6 +472,7 @@ DOCS_HTML = """<!doctype html>
     }
     .get { background: #2670a8; }
     .post { background: #1f7a5a; }
+    .delete { background: #a14921; }
     code, pre {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       color: var(--code);
@@ -496,7 +544,7 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-requests</code></h3>
-          <p class="meta">Create a linked Attio valuation request and ERP LeadValuation. Categories: gold, silver, coins.</p>
+          <p class="meta">Create a linked Attio valuation request and ERP LeadValuation. Valid items come from <code>/api/crm/valuation-items</code>.</p>
           <pre>{
   "attio_id": "person-record-id",
   "items": ["gold", "coins"],
@@ -504,6 +552,32 @@ DOCS_HTML = """<!doctype html>
   "posthog_distinct_id": "0192...",
   "rootle_request_id": "optional-client-id"
 }</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method get">GET</span>
+        <div>
+          <h3><code>/api/crm/valuation-items</code></h3>
+          <p class="meta">List active item categories that can be submitted for valuation.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-items</code></h3>
+          <p class="meta">Add or reactivate an item category.</p>
+          <pre>{
+  "name": "watches",
+  "label": "Watches",
+  "sort_order": 3
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method delete">DELETE</span>
+        <div>
+          <h3><code>/api/crm/valuation-items/{item_name}</code></h3>
+          <p class="meta">Remove an item category from the active submission list.</p>
         </div>
       </article>
       <article class="endpoint">

@@ -668,6 +668,20 @@ def ensure_valuation_request_object() -> dict:
     }
 
 
+def ensure_valuation_request_item_options(item_categories: list[str]) -> None:
+    ensure_valuation_request_object()
+    options = tuple(
+        str(category).strip()
+        for category in item_categories
+        if str(category).strip()
+    )
+    _ensure_select_options(
+        ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
+        "item_categories",
+        options,
+    )
+
+
 def ensure_stage_attribute() -> dict:
     attributes = _list_attio_attributes()
     attribute = next(
@@ -837,7 +851,7 @@ def create_attio_valuation_request(
     valuation_guide_url: str | None = None,
     source: str | None = None,
 ) -> str:
-    ensure_valuation_request_object()
+    ensure_valuation_request_item_options(item_categories)
     payload = {
         "data": {
             "values": _valuation_request_values(

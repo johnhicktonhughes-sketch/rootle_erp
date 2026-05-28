@@ -181,6 +181,17 @@ class LeadValuation(db.Model, TimestampMixin):
     meta = db.Column(db.JSON)
 
 
+class ValuationItemCategory(db.Model, TimestampMixin):
+    __tablename__ = "valuation_item_categories"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(64), unique=True, nullable=False)
+    label = db.Column(db.String(128), nullable=False)
+    description = db.Column(db.Text)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+
+
 class JourneyPhase(db.Model, TimestampMixin):
     __tablename__ = "journey_phases"
 
