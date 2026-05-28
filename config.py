@@ -25,3 +25,4 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JSON_SORT_KEYS = False
     JSONIFY_PRETTYPRINT_REGULAR = True
+    ROOTLE_API_KEY = os.getenv("ROOTLE_API_KEY") or os.getenv("API_KEY")

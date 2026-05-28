@@ -1,0 +1,539 @@
+API_TITLE = "Rootle ERP API"
+API_VERSION = "0.1.0"
+
+
+OPENAPI_SPEC = {
+    "openapi": "3.0.3",
+    "info": {
+        "title": API_TITLE,
+        "version": API_VERSION,
+        "description": (
+            "Operational ERP API for CRM capture, valuation requests, "
+            "customer contact details, and early internal ERP records."
+        ),
+    },
+    "servers": [{"url": "/"}],
+    "components": {
+        "securitySchemes": {
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+            },
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+            },
+        },
+        "schemas": {
+            "Error": {
+                "type": "object",
+                "properties": {
+                    "error": {"type": "string"},
+                    "message": {"type": "string"},
+                    "fields": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+    "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
+    "paths": {
+        "/": {
+            "get": {
+                "summary": "Health check",
+                "security": [],
+                "responses": {"200": {"description": "Service status"}},
+            }
+        },
+        "/api/companies": {
+            "get": {
+                "summary": "List companies",
+                "responses": {"200": {"description": "Company list"}},
+            },
+            "post": {
+                "summary": "Create a company",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["name"],
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "domain": {"type": "string"},
+                                    "website": {"type": "string"},
+                                    "industry": {"type": "string"},
+                                    "status": {"type": "string"},
+                                    "source": {"type": "string"},
+                                    "crm_external_id": {"type": "string"},
+                                    "description": {"type": "string"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {"201": {"description": "Company created"}},
+            },
+        },
+        "/api/companies/{company_id}": {
+            "get": {
+                "summary": "Get a company with contacts and opportunities",
+                "parameters": [
+                    {
+                        "name": "company_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {"200": {"description": "Company details"}},
+            }
+        },
+        "/api/journey-phases": {
+            "get": {
+                "summary": "List customer journey phases",
+                "responses": {"200": {"description": "Journey phase list"}},
+            }
+        },
+        "/api/leads": {
+            "get": {
+                "summary": "List legacy ERP leads",
+                "responses": {"200": {"description": "Lead list"}},
+            },
+            "post": {
+                "summary": "Create a legacy ERP lead",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "first_name": {"type": "string"},
+                                    "last_name": {"type": "string"},
+                                    "phone": {"type": "string"},
+                                    "email": {"type": "string"},
+                                    "source": {"type": "string"},
+                                    "preferred_contact_method": {"type": "string"},
+                                    "crm_record_id": {"type": "string"},
+                                    "metadata": {"type": "object"},
+                                    "status": {"type": "string"},
+                                    "stage": {"type": "string"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {"201": {"description": "Lead created"}},
+            },
+        },
+        "/api/leads/{lead_id}": {
+            "get": {
+                "summary": "Get a legacy ERP lead",
+                "parameters": [
+                    {
+                        "name": "lead_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {"200": {"description": "Lead details"}},
+            }
+        },
+        "/api/crm/leads/stage-1": {
+            "post": {
+                "summary": "Capture website identity details in Attio",
+                "description": "Finds or creates an Attio Person by phone number. Does not create an ERP lead.",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["name", "phone_number", "posthog_distinct_id"],
+                                "properties": {
+                                    "name": {"type": "string"},
+                                    "phone_number": {"type": "string"},
+                                    "posthog_distinct_id": {"type": "string"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Existing Attio person found"},
+                    "201": {"description": "Attio person created"},
+                    "400": {"description": "Missing required fields"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/crm/valuation-requests": {
+            "post": {
+                "summary": "Create a valuation request",
+                "description": "Creates one ERP LeadValuation and one linked Attio valuation_requests record.",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["attio_id", "items", "picture_url"],
+                                "properties": {
+                                    "attio_id": {"type": "string"},
+                                    "crm_person_record_id": {"type": "string"},
+                                    "crm_record_id": {"type": "string"},
+                                    "items": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": ["gold", "silver", "coins"],
+                                        },
+                                    },
+                                    "item_categories": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": ["gold", "silver", "coins"],
+                                        },
+                                    },
+                                    "picture_url": {"type": "string"},
+                                    "item_photo_url": {"type": "string"},
+                                    "photo_url": {"type": "string"},
+                                    "posthog_distinct_id": {"type": "string"},
+                                    "rootle_request_id": {"type": "string"},
+                                    "source": {"type": "string"},
+                                    "valuation_guide_id": {"type": "string"},
+                                    "valuation_guide_url": {"type": "string"},
+                                    "metadata": {"type": "object"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Duplicate request id returned existing valuation"},
+                    "201": {"description": "Valuation request created"},
+                    "400": {"description": "Invalid payload"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/crm/contact-details": {
+            "post": {
+                "summary": "Capture customer contact details",
+                "description": "Updates Attio Person details and matching ERP valuation cases.",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["attio_id"],
+                                "properties": {
+                                    "attio_id": {"type": "string"},
+                                    "crm_person_record_id": {"type": "string"},
+                                    "crm_record_id": {"type": "string"},
+                                    "attio_valuation_request_id": {"type": "string"},
+                                    "crm_valuation_request_id": {"type": "string"},
+                                    "email": {"type": "string"},
+                                    "address_line_1": {"type": "string"},
+                                    "address_line_2": {"type": "string"},
+                                    "city": {"type": "string"},
+                                    "postcode": {"type": "string"},
+                                    "country": {"type": "string"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Contact details updated"},
+                    "400": {"description": "Invalid payload"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/leads/{lead_id}/box-details": {
+            "post": {
+                "summary": "Add legacy box details to a lead",
+                "parameters": [
+                    {
+                        "name": "lead_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {"201": {"description": "Box detail created"}},
+            }
+        },
+        "/api/leads/{lead_id}/box-details/{box_detail_id}/revisions": {
+            "post": {
+                "summary": "Add a legacy box detail revision",
+                "parameters": [
+                    {
+                        "name": "lead_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    },
+                    {
+                        "name": "box_detail_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    },
+                ],
+                "responses": {"201": {"description": "Revision created"}},
+            }
+        },
+        "/api/leads/{lead_id}/estimates": {
+            "post": {
+                "summary": "Create a legacy lead estimate",
+                "parameters": [
+                    {
+                        "name": "lead_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {"201": {"description": "Estimate created"}},
+            }
+        },
+    },
+}
+
+
+DOCS_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rootle ERP API Docs</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17201d;
+      --muted: #5f6f69;
+      --line: #d9e2de;
+      --panel: #f7faf8;
+      --accent: #1f7a5a;
+      --warn: #a14921;
+      --code: #10231d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: #ffffff;
+      line-height: 1.55;
+    }
+    header {
+      border-bottom: 1px solid var(--line);
+      background: #f3f7f5;
+    }
+    .wrap {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+    header .wrap {
+      padding: 28px 0 22px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 5vw, 44px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 34px 0 14px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+    main {
+      padding: 26px 0 52px;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 18px;
+    }
+    .button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: #fff;
+      text-decoration: none;
+      font-weight: 650;
+    }
+    .button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+    .note {
+      padding: 14px 16px;
+      border: 1px solid #f1d0be;
+      border-left: 4px solid var(--warn);
+      border-radius: 6px;
+      background: #fff8f4;
+      color: #5c2c18;
+      margin: 18px 0 8px;
+    }
+    .endpoint {
+      border-top: 1px solid var(--line);
+      padding: 18px 0;
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .method {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      width: 76px;
+      min-height: 32px;
+      border-radius: 4px;
+      font-weight: 800;
+      font-size: 13px;
+      color: #fff;
+      background: #51615c;
+    }
+    .get { background: #2670a8; }
+    .post { background: #1f7a5a; }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: var(--code);
+    }
+    code {
+      overflow-wrap: anywhere;
+    }
+    pre {
+      margin: 12px 0 0;
+      padding: 12px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      font-size: 13px;
+    }
+    .path {
+      font-weight: 750;
+      overflow-wrap: anywhere;
+    }
+    .meta {
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    @media (max-width: 700px) {
+      .endpoint {
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Rootle ERP API</h1>
+      <p>CRM capture, valuation requests, contact details, and early ERP records.</p>
+      <div class="toolbar">
+        <a class="button primary" href="/openapi.json">OpenAPI JSON</a>
+        <a class="button" href="/">Health Check</a>
+      </div>
+    </div>
+  </header>
+  <main class="wrap">
+    <section>
+      <h2>Authentication</h2>
+      <p>Operational API routes under <code>/api</code> require an API key when <code>ROOTLE_API_KEY</code> is configured.</p>
+      <pre>X-API-Key: your-api-key</pre>
+      <p>Bearer tokens are also accepted:</p>
+      <pre>Authorization: Bearer your-api-key</pre>
+      <div class="note">Do not put live credentials in browser-visible code. Website calls should use a server-side proxy or a narrowly scoped public intake key strategy before broad production use.</div>
+    </section>
+
+    <section>
+      <h2>Website Flow</h2>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/leads/stage-1</code></h3>
+          <p class="meta">Capture name, phone number, and PostHog ID in Attio. Does not create an ERP lead.</p>
+          <pre>{
+  "name": "Jane Smith",
+  "phone_number": "+447123456789",
+  "posthog_distinct_id": "0192..."
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests</code></h3>
+          <p class="meta">Create a linked Attio valuation request and ERP LeadValuation. Categories: gold, silver, coins.</p>
+          <pre>{
+  "attio_id": "person-record-id",
+  "items": ["gold", "coins"],
+  "picture_url": "https://example.com/item.jpg",
+  "posthog_distinct_id": "0192...",
+  "rootle_request_id": "optional-client-id"
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/contact-details</code></h3>
+          <p class="meta">Update the Attio Person and matching ERP valuation cases with email and address details.</p>
+          <pre>{
+  "attio_id": "person-record-id",
+  "email": "jane@example.com",
+  "address_line_1": "1 Street",
+  "city": "London",
+  "postcode": "SW1A 1AA",
+  "country": "GB"
+}</pre>
+        </div>
+      </article>
+    </section>
+
+    <section>
+      <h2>ERP Records</h2>
+      <article class="endpoint"><span class="method get">GET</span><div><h3><code>/api/companies</code></h3><p class="meta">List companies.</p></div></article>
+      <article class="endpoint"><span class="method post">POST</span><div><h3><code>/api/companies</code></h3><p class="meta">Create a company.</p></div></article>
+      <article class="endpoint"><span class="method get">GET</span><div><h3><code>/api/companies/{id}</code></h3><p class="meta">Get a company with contacts and opportunities.</p></div></article>
+      <article class="endpoint"><span class="method get">GET</span><div><h3><code>/api/journey-phases</code></h3><p class="meta">List journey phases.</p></div></article>
+      <article class="endpoint"><span class="method get">GET</span><div><h3><code>/api/leads</code></h3><p class="meta">List legacy ERP leads.</p></div></article>
+      <article class="endpoint"><span class="method post">POST</span><div><h3><code>/api/leads</code></h3><p class="meta">Create a legacy ERP lead.</p></div></article>
+      <article class="endpoint"><span class="method get">GET</span><div><h3><code>/api/leads/{id}</code></h3><p class="meta">Get a legacy ERP lead with box details and estimates.</p></div></article>
+    </section>
+  </main>
+</body>
+</html>
+"""
