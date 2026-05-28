@@ -768,9 +768,8 @@ def create_attio_stage_1_lead(
             )
         }
     }
-    response = requests.put(
+    response = requests.post(
         _attio_url(f"objects/{ATTIO_OBJECT_SLUG}/records"),
-        params={"matching_attribute": "phone_numbers"},
         json=payload,
         headers=_headers(),
         timeout=15,
