@@ -204,7 +204,10 @@ def add_valuation_item():
 @crm_bp.route("/crm/valuation-items/<item_name>", methods=["DELETE"])
 def remove_valuation_item(item_name):
     name = _category_slug(item_name)
-    item = ValuationItemCategory.query.filter_by(name=name).first_or_404()
+    item = ValuationItemCategory.query.filter_by(name=name).first()
+    if not item:
+        return jsonify({"error": "valuation_item_not_found", "item": name}), 404
+
     item.active = False
     db.session.commit()
     return jsonify({"item": _valuation_item_to_dict(item), "removed": True})
