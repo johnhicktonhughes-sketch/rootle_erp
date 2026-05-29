@@ -35,10 +35,24 @@ def _string_list(payload, *keys):
         value = payload.get(key)
         if value is None:
             continue
-        if not isinstance(value, list):
-            return None
 
-        items = [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = re.split(r"[,;]", str(value))
+
+        items = []
+        for item in raw_items:
+            if isinstance(item, dict):
+                item = (
+                    item.get("name")
+                    or item.get("value")
+                    or item.get("slug")
+                    or item.get("label")
+                )
+            item = str(item).strip()
+            if item:
+                items.append(item)
         return items or None
 
     return None
@@ -56,6 +70,22 @@ def _category_slug(value):
 
 def _category_label(name):
     return name.replace("_", " ").title()
+
+
+def _merge_unique_values(existing_values, new_values):
+    if isinstance(existing_values, str):
+        existing_values = [existing_values]
+    if isinstance(new_values, str):
+        new_values = [new_values]
+
+    values = []
+    seen = set()
+    for value in [*(existing_values or []), *(new_values or [])]:
+        value = str(value).strip()
+        if value and value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values
 
 
 def _ensure_default_valuation_items():
@@ -305,6 +335,7 @@ def submit_item_for_valuation():
 
     item_categories = [_category_slug(category) for category in item_categories]
     item_categories = [category for category in item_categories if category]
+    item_categories = _merge_unique_values([], item_categories)
     if not item_categories:
         return jsonify({"error": "missing_required_fields", "fields": ["item_categories"]}), 400
 
@@ -326,12 +357,36 @@ def submit_item_for_valuation():
 
     existing = LeadValuation.query.filter_by(rootle_request_id=rootle_request_id).first()
     if existing:
+        merged_categories = _merge_unique_values(existing.item_categories, item_categories)
+        erp_valuation_updated = merged_categories != (existing.item_categories or [])
+        if erp_valuation_updated:
+            try:
+                from attio import update_attio_valuation_request
+
+                update_attio_valuation_request(
+                    valuation_request_id=existing.crm_valuation_request_id,
+                    person_record_id=existing.crm_person_record_id,
+                    rootle_request_id=existing.rootle_request_id,
+                    item_categories=merged_categories,
+                    item_photo_url=existing.item_photo_url,
+                    posthog_distinct_id=existing.posthog_distinct_id,
+                    valuation_guide_id=existing.valuation_guide_id,
+                    valuation_guide_url=existing.valuation_guide_url,
+                    source=existing.source,
+                )
+            except Exception as exc:
+                return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+            existing.item_categories = merged_categories
+            db.session.commit()
+
         return (
             jsonify(
                 {
                     "valuation": _valuation_to_dict(existing),
                     "attio_valuation_request_id": existing.crm_valuation_request_id,
                     "erp_valuation_created": False,
+                    "erp_valuation_updated": erp_valuation_updated,
                 }
             ),
             200,

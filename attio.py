@@ -887,6 +887,56 @@ def create_attio_valuation_request(
     return log.external_id
 
 
+def update_attio_valuation_request(
+    *,
+    valuation_request_id: str | None,
+    person_record_id: str,
+    rootle_request_id: str,
+    item_categories: list[str],
+    item_photo_url: str,
+    posthog_distinct_id: str | None = None,
+    valuation_guide_id: str | None = None,
+    valuation_guide_url: str | None = None,
+    source: str | None = None,
+) -> str | None:
+    if not valuation_request_id:
+        return valuation_request_id
+
+    ensure_valuation_request_item_options(item_categories)
+    payload = {
+        "data": {
+            "values": _valuation_request_values(
+                person_record_id=person_record_id,
+                rootle_request_id=rootle_request_id,
+                item_categories=item_categories,
+                item_photo_url=item_photo_url,
+                posthog_distinct_id=posthog_distinct_id,
+                valuation_guide_id=valuation_guide_id,
+                valuation_guide_url=valuation_guide_url,
+                source=source,
+            )
+        }
+    }
+    response = requests.patch(
+        _attio_url(
+            f"objects/{ATTIO_VALUATION_REQUEST_OBJECT_SLUG}/records/{valuation_request_id}"
+        ),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="valuation_request",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return valuation_request_id
+
+
 def update_attio_person_contact_details(
     *,
     person_record_id: str,
