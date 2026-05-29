@@ -168,3 +168,29 @@ POST /api/crm/contact-details
   "country": "GB"
 }
 ```
+
+### MEV calculations
+
+After an item submission creates a `lead_valuations` row, pricing can store an MEV
+calculation against that valuation:
+
+```http
+POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
+```
+
+```json
+{
+  "amount": 100.00,
+  "currency": "GBP",
+  "margin": 0.25,
+  "calculation_method": "manual",
+  "calculated_by": "pricing-agent",
+  "inputs": {
+    "guide_price": 125.00
+  }
+}
+```
+
+Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
+currency, margin, and calculation timestamp are also stored on `lead_valuations`
+and mirrored to the linked Attio `valuation_requests` record.

@@ -166,6 +166,10 @@ class LeadValuation(db.Model, TimestampMixin):
     item_photo_url = db.Column(db.String(1024), nullable=False)
     valuation_guide_id = db.Column(db.String(128))
     valuation_guide_url = db.Column(db.String(1024))
+    latest_mev_amount = db.Column(db.Numeric(12, 2))
+    latest_mev_currency = db.Column(db.String(3))
+    latest_mev_margin = db.Column(db.Numeric(7, 4))
+    latest_mev_calculated_at = db.Column(db.DateTime)
     status = db.Column(db.String(64), default="valuation_requested", nullable=False)
     current_stage = db.Column(db.String(64), default="item_submitted", nullable=False)
     source = db.Column(db.String(128))
@@ -179,6 +183,36 @@ class LeadValuation(db.Model, TimestampMixin):
     contact_details_received_at = db.Column(db.DateTime)
     stage_3_completed_at = db.Column(db.DateTime)
     meta = db.Column(db.JSON)
+
+    mev_calculations = db.relationship(
+        "LeadValuationMevCalculation",
+        back_populates="valuation",
+        cascade="all, delete-orphan",
+        order_by="LeadValuationMevCalculation.calculated_at.desc()",
+    )
+
+
+class LeadValuationMevCalculation(db.Model, TimestampMixin):
+    __tablename__ = "lead_valuation_mev_calculations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_valuation_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lead_valuations.id"),
+        nullable=False,
+        index=True,
+    )
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    currency = db.Column(db.String(3), nullable=False)
+    margin = db.Column(db.Numeric(7, 4), nullable=False)
+    calculation_method = db.Column(db.String(128))
+    calculated_by = db.Column(db.String(128))
+    calculated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    notes = db.Column(db.Text)
+    inputs = db.Column(db.JSON)
+    meta = db.Column(db.JSON)
+
+    valuation = db.relationship("LeadValuation", back_populates="mev_calculations")
 
 
 class ValuationItemCategory(db.Model, TimestampMixin):

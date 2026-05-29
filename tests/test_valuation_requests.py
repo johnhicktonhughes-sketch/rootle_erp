@@ -171,6 +171,93 @@ class ValuationRequestTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_mev_calculation_updates_latest_snapshot_and_keeps_history(self):
+        attio_mev_updates = []
+
+        def update_attio_valuation_request_mev(**kwargs):
+            attio_mev_updates.append(kwargs)
+            return kwargs["valuation_request_id"]
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_mev",
+            update_attio_valuation_request_mev=update_attio_valuation_request_mev,
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_mev",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_mev",
+                },
+            )
+
+            valuation_id = create_response.get_json()["valuation"]["id"]
+            first_mev_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+                json={
+                    "amount": "100.00",
+                    "currency": "gbp",
+                    "margin": "0.2500",
+                    "calculation_method": "manual",
+                    "calculated_by": "pricing-agent",
+                    "inputs": {"guide_price": "125.00"},
+                },
+            )
+            second_mev_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+                json={
+                    "amount": "90.00",
+                    "currency": "GBP",
+                    "margin": "0.3500",
+                    "calculation_method": "margin_reprice",
+                    "calculated_by": "pricing-agent",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(first_mev_response.status_code, 201)
+        self.assertEqual(second_mev_response.status_code, 201)
+
+        data = second_mev_response.get_json()
+        self.assertEqual(data["valuation"]["latest_mev_amount"], "90.00")
+        self.assertEqual(data["valuation"]["latest_mev_currency"], "GBP")
+        self.assertEqual(data["valuation"]["latest_mev_margin"], "0.3500")
+        self.assertEqual(data["valuation"]["status"], "mev_calculated")
+        self.assertEqual(len(data["valuation"]["mev_calculations"]), 2)
+        self.assertEqual(len(attio_mev_updates), 2)
+        self.assertEqual(attio_mev_updates[-1]["valuation_request_id"], "vr_mev")
+        self.assertEqual(str(attio_mev_updates[-1]["amount"]), "90.00")
+        self.assertEqual(attio_mev_updates[-1]["currency"], "GBP")
+        self.assertEqual(str(attio_mev_updates[-1]["margin"]), "0.3500")
+
+    def test_mev_calculation_requires_amount_currency_and_margin(self):
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_mev_invalid",
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_mev_invalid",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_mev_invalid",
+                },
+            )
+
+        valuation_id = create_response.get_json()["valuation"]["id"]
+        response = self.client.post(
+            f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+            json={"amount": "100.00", "currency": "GBP"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["fields"], ["margin"])
+
 
 if __name__ == "__main__":
     unittest.main()

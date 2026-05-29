@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
 import re
@@ -16,6 +17,7 @@ from models import (
     LeadBoxRevision,
     LeadEstimate,
     LeadValuation,
+    LeadValuationMevCalculation,
     ValuationItemCategory,
 )
 
@@ -61,7 +63,26 @@ def _string_list(payload, *keys):
 
 
 def _valuation_to_dict(valuation):
-    return valuation.to_dict()
+    data = valuation.to_dict()
+    data["mev_calculations"] = [
+        calculation.to_dict() for calculation in valuation.mev_calculations
+    ]
+    return data
+
+
+def _mev_calculation_to_dict(calculation):
+    return calculation.to_dict()
+
+
+def _decimal_value(payload, key):
+    value = payload.get(key)
+    if value is None or value == "":
+        return None
+
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 def _category_slug(value):
@@ -530,6 +551,87 @@ def submit_item_for_valuation():
                 "valuation": _valuation_to_dict(valuation),
                 "attio_valuation_request_id": crm_valuation_request_id,
                 "erp_valuation_created": True,
+            }
+        ),
+        201,
+    )
+
+
+@crm_bp.route("/crm/valuation-requests/<int:valuation_id>/mev-calculations", methods=["POST"])
+def add_valuation_mev_calculation(valuation_id):
+    valuation = LeadValuation.query.get_or_404(valuation_id)
+    payload = request.get_json() or {}
+    amount = _decimal_value(payload, "amount")
+    currency = (_required_string(payload, "currency") or "").upper()
+    margin = _decimal_value(payload, "margin")
+    calculation_method = _required_string(payload, "calculation_method")
+    calculated_by = _required_string(payload, "calculated_by")
+    notes = _required_string(payload, "notes")
+    calculated_at = datetime.utcnow()
+
+    missing_fields = [
+        field
+        for field, value in (
+            ("amount", amount),
+            ("currency", currency),
+            ("margin", margin),
+        )
+        if value is None or value == ""
+    ]
+    if missing_fields:
+        return jsonify({"error": "missing_required_fields", "fields": missing_fields}), 400
+
+    if amount < 0:
+        return jsonify({"error": "invalid_amount", "message": "amount must be zero or greater"}), 400
+
+    if len(currency) != 3 or not currency.isalpha():
+        return jsonify({"error": "invalid_currency", "message": "currency must be a 3-letter ISO code"}), 400
+
+    if margin < 0:
+        return jsonify({"error": "invalid_margin", "message": "margin must be zero or greater"}), 400
+
+    calculation = LeadValuationMevCalculation(
+        valuation=valuation,
+        amount=amount,
+        currency=currency,
+        margin=margin,
+        calculation_method=calculation_method,
+        calculated_by=calculated_by,
+        calculated_at=calculated_at,
+        notes=notes,
+        inputs=payload.get("inputs"),
+        meta=payload.get("metadata"),
+    )
+    valuation.latest_mev_amount = amount
+    valuation.latest_mev_currency = currency
+    valuation.latest_mev_margin = margin
+    valuation.latest_mev_calculated_at = calculated_at
+    valuation.status = "mev_calculated"
+
+    db.session.add(calculation)
+    db.session.flush()
+
+    try:
+        from attio import update_attio_valuation_request_mev
+
+        update_attio_valuation_request_mev(
+            valuation_request_id=valuation.crm_valuation_request_id,
+            amount=amount,
+            currency=currency,
+            margin=margin,
+            calculated_at=calculated_at,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "valuation": _valuation_to_dict(valuation),
+                "mev_calculation": _mev_calculation_to_dict(calculation),
             }
         ),
         201,

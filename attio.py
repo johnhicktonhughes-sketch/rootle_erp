@@ -136,6 +136,46 @@ VALUATION_REQUEST_ATTRIBUTES = (
         "is_multiselect": False,
         "config": {},
     },
+    {
+        "title": "Latest MEV Amount",
+        "api_slug": "latest_mev_amount",
+        "description": "Latest minimum expected value amount calculated by Rootle.",
+        "type": "number",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Latest MEV Currency",
+        "api_slug": "latest_mev_currency",
+        "description": "Currency for the latest Rootle MEV calculation.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Latest MEV Margin",
+        "api_slug": "latest_mev_margin",
+        "description": "Margin used for the latest Rootle MEV calculation.",
+        "type": "number",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Latest MEV Calculated At",
+        "api_slug": "latest_mev_calculated_at",
+        "description": "Timestamp for the latest Rootle MEV calculation.",
+        "type": "timestamp",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
 )
 MARKETING_ATTRIBUTION_ATTRIBUTES = (
     {
@@ -927,6 +967,48 @@ def update_attio_valuation_request(
     )
     _record_attio_result(
         entity_type="valuation_request",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return valuation_request_id
+
+
+def update_attio_valuation_request_mev(
+    *,
+    valuation_request_id: str | None,
+    amount,
+    currency: str,
+    margin,
+    calculated_at: datetime,
+) -> str | None:
+    if not valuation_request_id:
+        return valuation_request_id
+
+    ensure_valuation_request_object()
+    payload = {
+        "data": {
+            "values": {
+                "latest_mev_amount": float(amount),
+                "latest_mev_currency": currency,
+                "latest_mev_margin": float(margin),
+                "latest_mev_calculated_at": calculated_at.isoformat(),
+            }
+        }
+    }
+    response = requests.patch(
+        _attio_url(
+            f"objects/{ATTIO_VALUATION_REQUEST_OBJECT_SLUG}/records/{valuation_request_id}"
+        ),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="valuation_request_mev",
         payload=payload,
         response=response,
     )

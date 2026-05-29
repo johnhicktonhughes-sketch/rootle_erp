@@ -218,6 +218,47 @@ OPENAPI_SPEC = {
                 },
             }
         },
+        "/api/crm/valuation-requests/{valuation_id}/mev-calculations": {
+            "post": {
+                "summary": "Create an MEV calculation",
+                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot on the ERP valuation, and mirrors the latest values to Attio.",
+                "parameters": [
+                    {
+                        "name": "valuation_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["amount", "currency", "margin"],
+                                "properties": {
+                                    "amount": {"type": "number"},
+                                    "currency": {"type": "string"},
+                                    "margin": {"type": "number"},
+                                    "calculation_method": {"type": "string"},
+                                    "calculated_by": {"type": "string"},
+                                    "notes": {"type": "string"},
+                                    "inputs": {"type": "object"},
+                                    "metadata": {"type": "object"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "201": {"description": "MEV calculation created"},
+                    "400": {"description": "Invalid payload"},
+                    "404": {"description": "Valuation not found"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
         "/api/crm/valuation-items": {
             "get": {
                 "summary": "List valid valuation item categories",
@@ -570,6 +611,20 @@ DOCS_HTML = """<!doctype html>
   "picture_url": "https://example.com/item.jpg",
   "posthog_distinct_id": "0192...",
   "rootle_request_id": "optional-client-id"
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-calculations</code></h3>
+          <p class="meta">Store an audited MEV calculation and mirror the latest amount, currency, margin, and timestamp to Attio.</p>
+          <pre>{
+  "amount": 100.00,
+  "currency": "GBP",
+  "margin": 0.25,
+  "calculation_method": "manual",
+  "calculated_by": "pricing-agent"
 }</pre>
         </div>
       </article>

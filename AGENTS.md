@@ -43,7 +43,7 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
 
 - PostgreSQL is now the target database for the ERP
 - Configuration expects `DATABASE_URL` for the Postgres connection
-- Latest Alembic head is `a1b2c3d4e5f6`
+- Latest Alembic head is `c4d5e6f7a8b9`
 
 ## Attio integration
 
@@ -63,6 +63,10 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
   - `rootle_posthog_distinct_id`
   - `source`
   - `stage_3_completed_at`
+  - `latest_mev_amount`
+  - `latest_mev_currency`
+  - `latest_mev_margin`
+  - `latest_mev_calculated_at`
 - Valid `item_categories` are `gold`, `silver`, and `coins`
 
 ## Website form flow
@@ -88,6 +92,23 @@ The current website form model is event-based rather than stage-order dependent.
   - Updates matching ERP `LeadValuation` cases when they exist
 
 The UI labels may still say stage 1, stage 2, and stage 3, but the backend should not rely on those steps arriving in a fixed order.
+
+## MEV and margin calculations
+
+When a `LeadValuation` is ready for pricing, the ERP can store a minimum expected valuation (MEV) and anticipated margin.
+
+- Endpoint: `POST /api/crm/valuation-requests/{valuation_id}/mev-calculations`
+- Required payload fields: `amount`, `currency`, `margin`
+- Optional payload fields: `calculation_method`, `calculated_by`, `notes`, `inputs`, `metadata`
+- Every calculation appends an audit row to `lead_valuation_mev_calculations`
+- `lead_valuations` also stores the latest snapshot in:
+  - `latest_mev_amount`
+  - `latest_mev_currency`
+  - `latest_mev_margin`
+  - `latest_mev_calculated_at`
+- The latest MEV snapshot is mirrored to the linked Attio `valuation_requests` record at calculation time
+- Attio only holds the latest MEV fields; each new calculation overwrites the previous MEV values in Attio
+- The ERP remains the historical source of truth for previous MEV calculations
 
 ## Next planned steps
 
