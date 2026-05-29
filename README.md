@@ -47,6 +47,7 @@ The API will start on `http://127.0.0.1:5000`.
 - `POST /api/crm/leads/stage-1`
 - `POST /api/crm/valuation-requests`
 - `POST /api/crm/contact-details`
+- `POST /api/webhooks/attio`
 
 ### Website form stage 1
 
@@ -129,8 +130,24 @@ Aliases are accepted:
 - `attio_id`, `crm_person_record_id`, or `crm_record_id`
 
 Each item submission creates its own ERP `lead_valuations` record and its own Attio
-`valuation_requests` record. Reusing the same `rootle_request_id` returns the
-existing ERP valuation instead of creating a duplicate.
+`valuation_requests` record. Reusing the same `rootle_request_id` merges any newly
+submitted item categories into the existing ERP valuation instead of creating a
+duplicate.
+
+### Attio deletion sync
+
+Configure an Attio `record.deleted` webhook with this target URL:
+
+```http
+POST /api/webhooks/attio
+```
+
+Set `ATTIO_WEBHOOK_SECRET` in `.env` to the webhook secret from Attio. When a
+deleted Attio record id matches `lead_valuations.crm_valuation_request_id`, the
+ERP deletes the matching `lead_valuations` row. Optionally set
+`ATTIO_VALUATION_REQUEST_OBJECT_ID` to the Attio object id for
+`valuation_requests` so unrelated Attio record deletes are ignored before the
+database lookup.
 
 ### Contact details
 

@@ -30,6 +30,9 @@ def create_app(config_class=Config):
         if request.method == "OPTIONS" or not request.path.startswith("/api/"):
             return None
 
+        if request.path == "/api/webhooks/attio":
+            return None
+
         expected_key = app.config.get("ROOTLE_API_KEY")
         if not expected_key:
             return None

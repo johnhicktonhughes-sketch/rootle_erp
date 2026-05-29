@@ -306,6 +306,25 @@ OPENAPI_SPEC = {
                 },
             }
         },
+        "/api/webhooks/attio": {
+            "post": {
+                "summary": "Receive Attio webhook events",
+                "description": "Deletes matching ERP LeadValuation rows when Attio sends record.deleted events for valuation_requests records.",
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "Attio-Signature",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Webhook processed"},
+                    "401": {"description": "Invalid webhook signature"},
+                },
+            }
+        },
         "/api/leads/{lead_id}/box-details": {
             "post": {
                 "summary": "Add legacy box details to a lead",
@@ -578,6 +597,13 @@ DOCS_HTML = """<!doctype html>
         <div>
           <h3><code>/api/crm/valuation-items/{item_name}</code></h3>
           <p class="meta">Remove an item category from the active submission list.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/webhooks/attio</code></h3>
+          <p class="meta">Receive Attio <code>record.deleted</code> events and delete matching ERP valuation cases. Requires <code>ATTIO_WEBHOOK_SECRET</code>.</p>
         </div>
       </article>
       <article class="endpoint">

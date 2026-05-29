@@ -1,8 +1,10 @@
 from datetime import datetime
+import hashlib
+import hmac
 import re
 from uuid import uuid4
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from database import db
 from models import (
@@ -86,6 +88,58 @@ def _merge_unique_values(existing_values, new_values):
             values.append(value)
             seen.add(value)
     return values
+
+
+def _attio_webhook_signature_is_valid(raw_body):
+    secret = current_app.config.get("ATTIO_WEBHOOK_SECRET")
+    if not secret:
+        return False
+
+    signature = (
+        request.headers.get("Attio-Signature")
+        or request.headers.get("X-Attio-Signature")
+        or ""
+    ).strip()
+    if not signature:
+        return False
+
+    expected_signature = hmac.new(
+        str(secret).encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(signature, expected_signature)
+
+
+def _attio_webhook_events(payload):
+    events = payload.get("events")
+    if isinstance(events, list):
+        return [event for event in events if isinstance(event, dict)]
+
+    if payload.get("event_type"):
+        return [payload]
+
+    return []
+
+
+def _attio_deleted_record_id(event):
+    event_id = event.get("id")
+    if isinstance(event_id, dict):
+        return event_id.get("record_id")
+
+    return event.get("record_id")
+
+
+def _attio_event_matches_valuation_request_object(event):
+    expected_object_id = current_app.config.get("ATTIO_VALUATION_REQUEST_OBJECT_ID")
+    if not expected_object_id:
+        return True
+
+    event_id = event.get("id")
+    if not isinstance(event_id, dict):
+        return False
+
+    return event_id.get("object_id") == expected_object_id
 
 
 def _ensure_default_valuation_items():
@@ -173,6 +227,53 @@ def list_valuation_items():
         ValuationItemCategory.label,
     ).all()
     return jsonify([_valuation_item_to_dict(item) for item in items])
+
+
+@crm_bp.route("/webhooks/attio", methods=["POST"])
+def handle_attio_webhook():
+    raw_body = request.get_data()
+    if not _attio_webhook_signature_is_valid(raw_body):
+        return jsonify({"error": "invalid_webhook_signature"}), 401
+
+    payload = request.get_json(silent=True) or {}
+    deleted_record_ids = []
+    deleted_valuations = []
+    ignored_events = 0
+
+    for event in _attio_webhook_events(payload):
+        if event.get("event_type") != "record.deleted":
+            ignored_events += 1
+            continue
+
+        if not _attio_event_matches_valuation_request_object(event):
+            ignored_events += 1
+            continue
+
+        record_id = _attio_deleted_record_id(event)
+        if not record_id:
+            ignored_events += 1
+            continue
+
+        deleted_record_ids.append(record_id)
+        valuation = LeadValuation.query.filter_by(
+            crm_valuation_request_id=record_id,
+        ).first()
+        if not valuation:
+            continue
+
+        deleted_valuations.append(_valuation_to_dict(valuation))
+        db.session.delete(valuation)
+
+    db.session.commit()
+
+    return jsonify(
+        {
+            "deleted_attio_record_ids": deleted_record_ids,
+            "deleted_erp_valuations": deleted_valuations,
+            "deleted_erp_valuation_count": len(deleted_valuations),
+            "ignored_event_count": ignored_events,
+        }
+    )
 
 
 @crm_bp.route("/crm/valuation-items", methods=["POST"])
