@@ -190,6 +190,12 @@ class LeadValuation(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="LeadValuationMevCalculation.calculated_at.desc()",
     )
+    inbound_labels = db.relationship(
+        "InboundLabel",
+        back_populates="valuation",
+        cascade="all, delete-orphan",
+        order_by="InboundLabel.created_at.desc()",
+    )
 
 
 class LeadValuationMevCalculation(db.Model, TimestampMixin):
@@ -213,6 +219,44 @@ class LeadValuationMevCalculation(db.Model, TimestampMixin):
     meta = db.Column(db.JSON)
 
     valuation = db.relationship("LeadValuation", back_populates="mev_calculations")
+
+
+class InboundLabel(db.Model, TimestampMixin):
+    __tablename__ = "inbound_labels"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rootle_label_id = db.Column(db.String(128), unique=True, nullable=False)
+    lead_valuation_id = db.Column(
+        db.Integer,
+        db.ForeignKey("lead_valuations.id"),
+        nullable=False,
+        index=True,
+    )
+    crm_person_record_id = db.Column(db.String(128), nullable=False, index=True)
+    crm_valuation_request_id = db.Column(db.String(128), index=True)
+    rootle_request_id = db.Column(db.String(128), nullable=False, index=True)
+    status = db.Column(db.String(64), default="label_requested", nullable=False)
+    dispatch_method = db.Column(db.String(64), default="email", nullable=False)
+    courier = db.Column(db.String(128))
+    service_level = db.Column(db.String(128))
+    tracking_number = db.Column(db.String(128), unique=True)
+    label_url = db.Column(db.String(1024))
+    barcode_value = db.Column(db.String(256), unique=True, nullable=False)
+    qr_payload = db.Column(db.String(1024), nullable=False)
+    destination_country = db.Column(db.String(128))
+    currency = db.Column(db.String(3))
+    mev_amount = db.Column(db.Numeric(12, 2))
+    white_glove_required = db.Column(db.Boolean, default=False, nullable=False)
+    requested_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    generated_at = db.Column(db.DateTime)
+    sent_at = db.Column(db.DateTime)
+    used_at = db.Column(db.DateTime)
+    received_at = db.Column(db.DateTime)
+    expires_at = db.Column(db.DateTime)
+    cancelled_at = db.Column(db.DateTime)
+    meta = db.Column(db.JSON)
+
+    valuation = db.relationship("LeadValuation", back_populates="inbound_labels")
 
 
 class ValuationItemCategory(db.Model, TimestampMixin):

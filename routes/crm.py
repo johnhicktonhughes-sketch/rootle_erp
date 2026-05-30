@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
@@ -12,6 +12,7 @@ from models import (
     Company,
     Contact,
     JourneyPhase,
+    InboundLabel,
     Lead,
     LeadBoxDetail,
     LeadBoxRevision,
@@ -24,6 +25,9 @@ from models import (
 crm_bp = Blueprint("crm", __name__)
 
 DEFAULT_VALUATION_ITEMS = ("gold", "silver", "coins")
+LABEL_MEV_THRESHOLD = Decimal("100.00")
+WHITE_GLOVE_MEV_THRESHOLD = Decimal("10000.00")
+LABEL_TERMINAL_STATUSES = {"cancelled", "expired", "received"}
 
 
 def _required_string(payload, key):
@@ -67,11 +71,22 @@ def _valuation_to_dict(valuation):
     data["mev_calculations"] = [
         calculation.to_dict() for calculation in valuation.mev_calculations
     ]
+    data["inbound_labels"] = [_label_to_dict(label) for label in valuation.inbound_labels]
+    data["label_eligibility"] = _label_eligibility_for_valuation(valuation)
     return data
 
 
 def _mev_calculation_to_dict(calculation):
     return calculation.to_dict()
+
+
+def _label_to_dict(label, include_context=False):
+    data = label.to_dict()
+    if include_context:
+        data["valuation"] = _valuation_to_dict(label.valuation)
+        data["expected_items"] = label.valuation.item_categories
+        data["item_photo_url"] = label.valuation.item_photo_url
+    return data
 
 
 def _decimal_value(payload, key):
@@ -109,6 +124,87 @@ def _merge_unique_values(existing_values, new_values):
             values.append(value)
             seen.add(value)
     return values
+
+
+def _bool_value(payload, key):
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _active_label_for_valuation(valuation):
+    return (
+        InboundLabel.query.filter_by(lead_valuation_id=valuation.id)
+        .filter(~InboundLabel.status.in_(LABEL_TERMINAL_STATUSES))
+        .order_by(InboundLabel.created_at.desc())
+        .first()
+    )
+
+
+def _label_eligibility_for_valuation(valuation):
+    amount = valuation.latest_mev_amount
+    currency = (valuation.latest_mev_currency or "").upper()
+    if amount is None:
+        return {
+            "eligible": False,
+            "reason": "missing_mev",
+            "threshold_amount": str(LABEL_MEV_THRESHOLD),
+            "threshold_currency": "GBP",
+            "white_glove_required": False,
+        }
+
+    eligible = currency == "GBP" and amount > LABEL_MEV_THRESHOLD
+    white_glove_required = currency == "GBP" and amount > WHITE_GLOVE_MEV_THRESHOLD
+    reason = None if eligible else "below_threshold_or_unsupported_currency"
+    return {
+        "eligible": eligible,
+        "reason": reason,
+        "threshold_amount": str(LABEL_MEV_THRESHOLD),
+        "threshold_currency": "GBP",
+        "white_glove_threshold_amount": str(WHITE_GLOVE_MEV_THRESHOLD),
+        "white_glove_required": white_glove_required,
+    }
+
+
+def _default_label_routing(valuation, payload):
+    destination_country = (
+        _required_string(payload, "destination_country")
+        or valuation.country
+        or "GB"
+    )
+    currency = (valuation.latest_mev_currency or "").upper() or None
+    amount = valuation.latest_mev_amount or Decimal("0")
+    white_glove_required = currency == "GBP" and amount > WHITE_GLOVE_MEV_THRESHOLD
+
+    if white_glove_required:
+        dispatch_method = "white_glove"
+        courier = "rootle_white_glove"
+        service_level = "concierge_intake"
+    elif str(destination_country).strip().upper() in {"GB", "UK", "UNITED KINGDOM"}:
+        dispatch_method = "email"
+        courier = "royal_mail"
+        service_level = "tracked_return"
+    else:
+        dispatch_method = "email"
+        courier = "international_courier"
+        service_level = "standard_inbound"
+
+    return {
+        "destination_country": destination_country,
+        "dispatch_method": _required_string(payload, "dispatch_method") or dispatch_method,
+        "courier": _required_string(payload, "courier") or courier,
+        "service_level": _required_string(payload, "service_level") or service_level,
+        "white_glove_required": white_glove_required,
+    }
+
+
+def _scan_payload_for_label(rootle_label_id):
+    path = f"/api/crm/inbound-labels/scan/{rootle_label_id}"
+    base_url = request.url_root.rstrip("/") if request else ""
+    return f"{base_url}{path}" if base_url else path
 
 
 def _attio_webhook_signature_is_valid(raw_body):
@@ -636,6 +732,140 @@ def add_valuation_mev_calculation(valuation_id):
         ),
         201,
     )
+
+
+@crm_bp.route("/crm/valuation-requests/<int:valuation_id>/inbound-labels", methods=["POST"])
+def create_inbound_label(valuation_id):
+    valuation = LeadValuation.query.get_or_404(valuation_id)
+    payload = request.get_json() or {}
+    eligibility = _label_eligibility_for_valuation(valuation)
+    force_create = _bool_value(payload, "force")
+
+    if not eligibility["eligible"] and not force_create:
+        return (
+            jsonify(
+                {
+                    "error": "valuation_not_label_eligible",
+                    "label_eligibility": eligibility,
+                }
+            ),
+            400,
+        )
+
+    existing_label = _active_label_for_valuation(valuation)
+    if existing_label:
+        return (
+            jsonify(
+                {
+                    "label": _label_to_dict(existing_label, include_context=True),
+                    "label_created": False,
+                    "label_eligibility": eligibility,
+                }
+            ),
+            200,
+        )
+
+    rootle_label_id = _required_string(payload, "rootle_label_id") or f"lbl-{uuid4().hex}"
+    routing = _default_label_routing(valuation, payload)
+    now = datetime.utcnow()
+    generated_at = now if payload.get("label_url") else None
+    sent_at = now if _bool_value(payload, "mark_sent") else None
+    status = _required_string(payload, "status")
+    if not status:
+        status = "sent" if sent_at else "generated" if generated_at else "label_requested"
+
+    label = InboundLabel(
+        rootle_label_id=rootle_label_id,
+        lead_valuation_id=valuation.id,
+        crm_person_record_id=valuation.crm_person_record_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        rootle_request_id=valuation.rootle_request_id,
+        status=status,
+        dispatch_method=routing["dispatch_method"],
+        courier=routing["courier"],
+        service_level=routing["service_level"],
+        tracking_number=_required_string(payload, "tracking_number"),
+        label_url=_required_string(payload, "label_url"),
+        barcode_value=rootle_label_id,
+        qr_payload=_scan_payload_for_label(rootle_label_id),
+        destination_country=routing["destination_country"],
+        currency=valuation.latest_mev_currency,
+        mev_amount=valuation.latest_mev_amount,
+        white_glove_required=routing["white_glove_required"],
+        requested_at=now,
+        generated_at=generated_at,
+        sent_at=sent_at,
+        expires_at=now + timedelta(days=30),
+        meta=payload.get("metadata"),
+    )
+    db.session.add(label)
+    valuation.current_stage = "inbound_label_created"
+    valuation.status = "inbound_label_created"
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "label": _label_to_dict(label, include_context=True),
+                "label_created": True,
+                "label_eligibility": eligibility,
+            }
+        ),
+        201,
+    )
+
+
+@crm_bp.route("/crm/inbound-labels/<rootle_label_id>", methods=["GET", "PATCH"])
+def manage_inbound_label(rootle_label_id):
+    label = InboundLabel.query.filter_by(rootle_label_id=rootle_label_id).first_or_404()
+
+    if request.method == "GET":
+        return jsonify({"label": _label_to_dict(label, include_context=True)})
+
+    payload = request.get_json() or {}
+    status = _required_string(payload, "status")
+    now = datetime.utcnow()
+
+    if status:
+        label.status = status
+        if status == "generated":
+            label.generated_at = label.generated_at or now
+        elif status == "sent":
+            label.sent_at = label.sent_at or now
+        elif status in {"used", "label_scanned"}:
+            label.used_at = label.used_at or now
+            label.status = "label_scanned"
+        elif status == "received":
+            label.received_at = label.received_at or now
+        elif status == "cancelled":
+            label.cancelled_at = label.cancelled_at or now
+
+    for key in ("courier", "service_level", "tracking_number", "label_url"):
+        value = _required_string(payload, key)
+        if value:
+            setattr(label, key, value)
+
+    if payload.get("metadata") is not None:
+        label.meta = payload.get("metadata")
+
+    if label.label_url and not label.generated_at:
+        label.generated_at = now
+
+    db.session.commit()
+    return jsonify({"label": _label_to_dict(label, include_context=True)})
+
+
+@crm_bp.route("/crm/inbound-labels/scan/<barcode_value>", methods=["GET", "POST"])
+def scan_inbound_label(barcode_value):
+    label = InboundLabel.query.filter_by(barcode_value=barcode_value).first_or_404()
+
+    if request.method == "POST":
+        label.used_at = label.used_at or datetime.utcnow()
+        if label.status not in {"received", "cancelled", "expired"}:
+            label.status = "label_scanned"
+        db.session.commit()
+
+    return jsonify({"label": _label_to_dict(label, include_context=True)})
 
 
 @crm_bp.route("/crm/contact-details", methods=["POST"])

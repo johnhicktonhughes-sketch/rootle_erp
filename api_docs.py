@@ -259,6 +259,98 @@ OPENAPI_SPEC = {
                 },
             }
         },
+        "/api/crm/valuation-requests/{valuation_id}/inbound-labels": {
+            "post": {
+                "summary": "Create an inbound label",
+                "description": "Creates or returns the active ERP inbound label for a valuation. Requires latest GBP MEV above 100 unless force=true is supplied.",
+                "parameters": [
+                    {
+                        "name": "valuation_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "label_url": {"type": "string"},
+                                    "tracking_number": {"type": "string"},
+                                    "courier": {"type": "string"},
+                                    "service_level": {"type": "string"},
+                                    "dispatch_method": {"type": "string"},
+                                    "destination_country": {"type": "string"},
+                                    "force": {"type": "boolean"},
+                                    "metadata": {"type": "object"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Existing active label returned"},
+                    "201": {"description": "Inbound label created"},
+                    "400": {"description": "Valuation not eligible for a label"},
+                    "404": {"description": "Valuation not found"},
+                },
+            }
+        },
+        "/api/crm/inbound-labels/{rootle_label_id}": {
+            "get": {
+                "summary": "Get an inbound label",
+                "parameters": [
+                    {
+                        "name": "rootle_label_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Inbound label details"}},
+            },
+            "patch": {
+                "summary": "Update an inbound label",
+                "parameters": [
+                    {
+                        "name": "rootle_label_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Inbound label updated"}},
+            },
+        },
+        "/api/crm/inbound-labels/scan/{barcode_value}": {
+            "get": {
+                "summary": "Resolve an inbound label scan",
+                "parameters": [
+                    {
+                        "name": "barcode_value",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Label and valuation context"}},
+            },
+            "post": {
+                "summary": "Mark an inbound label as scanned",
+                "parameters": [
+                    {
+                        "name": "barcode_value",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Label scan recorded"}},
+            },
+        },
         "/api/crm/valuation-items": {
             "get": {
                 "summary": "List valid valuation item categories",
@@ -626,6 +718,31 @@ DOCS_HTML = """<!doctype html>
   "calculation_method": "manual",
   "calculated_by": "pricing-agent"
 }</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/{valuation_id}/inbound-labels</code></h3>
+          <p class="meta">Create or return the active ERP inbound label for a valuation with latest GBP MEV above 100.</p>
+          <pre>{
+  "label_url": "https://example.com/label.pdf",
+  "tracking_number": "AA123456789GB"
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/inbound-labels/scan/{barcode_value}</code></h3>
+          <p class="meta">Record a label scan and resolve the person, valuation, expected items, and submitted photo.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method get">GET</span>
+        <div>
+          <h3><code>/api/crm/inbound-labels/{rootle_label_id}</code></h3>
+          <p class="meta">Get inbound label details and linked valuation context. Use PATCH on the same path to update status or courier fields.</p>
         </div>
       </article>
       <article class="endpoint">

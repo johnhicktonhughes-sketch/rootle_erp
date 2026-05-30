@@ -258,6 +258,107 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["fields"], ["margin"])
 
+    def test_inbound_label_requires_eligible_mev_and_returns_scan_context(self):
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_label",
+            update_attio_valuation_request_mev=lambda **kwargs: kwargs[
+                "valuation_request_id"
+            ],
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_label",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_label",
+                },
+            )
+            valuation_id = create_response.get_json()["valuation"]["id"]
+
+            ineligible_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/inbound-labels",
+                json={},
+            )
+
+            self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+                json={
+                    "amount": "150.00",
+                    "currency": "GBP",
+                    "margin": "0.2500",
+                },
+            )
+            label_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/inbound-labels",
+                json={"label_url": "https://example.com/label.pdf"},
+            )
+            duplicate_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/inbound-labels",
+                json={},
+            )
+
+        self.assertEqual(ineligible_response.status_code, 400)
+        self.assertEqual(label_response.status_code, 201)
+        self.assertEqual(duplicate_response.status_code, 200)
+
+        label_data = label_response.get_json()["label"]
+        self.assertEqual(label_data["crm_person_record_id"], "person_label")
+        self.assertEqual(label_data["rootle_request_id"], "request_label")
+        self.assertEqual(label_data["courier"], "royal_mail")
+        self.assertEqual(label_data["service_level"], "tracked_return")
+        self.assertEqual(label_data["expected_items"], ["gold"])
+        self.assertEqual(label_data["item_photo_url"], "https://example.com/item.jpg")
+
+        scan_response = self.client.post(
+            f"/api/crm/inbound-labels/scan/{label_data['barcode_value']}"
+        )
+        scan_data = scan_response.get_json()["label"]
+        self.assertEqual(scan_response.status_code, 200)
+        self.assertEqual(scan_data["status"], "label_scanned")
+        self.assertEqual(scan_data["valuation"]["id"], valuation_id)
+        self.assertEqual(scan_data["valuation"]["item_photo_url"], "https://example.com/item.jpg")
+
+    def test_high_value_inbound_label_defaults_to_white_glove(self):
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_white_glove",
+            update_attio_valuation_request_mev=lambda **kwargs: kwargs[
+                "valuation_request_id"
+            ],
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_white_glove",
+                    "items": ["coins"],
+                    "picture_url": "https://example.com/coin.jpg",
+                    "rootle_request_id": "request_white_glove",
+                },
+            )
+            valuation_id = create_response.get_json()["valuation"]["id"]
+            self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+                json={
+                    "amount": "10001.00",
+                    "currency": "GBP",
+                    "margin": "0.4000",
+                },
+            )
+            label_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/inbound-labels",
+                json={},
+            )
+
+        self.assertEqual(label_response.status_code, 201)
+        label_data = label_response.get_json()["label"]
+        self.assertTrue(label_data["white_glove_required"])
+        self.assertEqual(label_data["dispatch_method"], "white_glove")
+        self.assertEqual(label_data["courier"], "rootle_white_glove")
+
 
 if __name__ == "__main__":
     unittest.main()

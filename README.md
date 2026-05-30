@@ -194,3 +194,32 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
 currency, margin, and calculation timestamp are also stored on `lead_valuations`
 and mirrored to the linked Attio `valuation_requests` record.
+
+### Inbound labels
+
+When a valuation has a latest GBP MEV above 100.00, the ERP can create one active
+inbound label for that valuation. Labels are local ERP records first; Attio label
+sync can be added later as a projection.
+
+```http
+POST /api/crm/valuation-requests/{valuation_id}/inbound-labels
+```
+
+```json
+{
+  "label_url": "https://example.com/label.pdf",
+  "tracking_number": "AA123456789GB"
+}
+```
+
+The response includes a `barcode_value` and `qr_payload`. The QR payload points at
+the scan endpoint and resolves back to the person, valuation request, expected
+item categories, and submitted item photo:
+
+```http
+POST /api/crm/inbound-labels/scan/{barcode_value}
+```
+
+MEV above 10000.00 GBP defaults to a `white_glove` dispatch method with
+`white_glove_required=true`. Courier and service values can be overridden in the
+label creation payload while the policy layer is still simple.
