@@ -428,23 +428,23 @@ def add_valuation_item():
         except (TypeError, ValueError):
             return jsonify({"error": "invalid_sort_order"}), 400
 
-    db.session.commit()
-
     try:
         from attio import ensure_valuation_request_item_options
 
         ensure_valuation_request_item_options([item.name])
     except Exception as exc:
+        db.session.rollback()
         return (
             jsonify(
                 {
-                    "item": _valuation_item_to_dict(item),
-                    "warning": "attio_option_sync_failed",
+                    "error": "attio_option_sync_failed",
                     "message": str(exc),
                 }
             ),
-            status_code,
+            502,
         )
+
+    db.session.commit()
 
     return jsonify({"item": _valuation_item_to_dict(item)}), status_code
 

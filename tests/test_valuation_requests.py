@@ -93,6 +93,44 @@ class ValuationRequestTests(unittest.TestCase):
             ["gold", "coins"],
         )
 
+    def test_add_valuation_item_syncs_attio_option(self):
+        synced_options = []
+
+        attio = types.SimpleNamespace(
+            ensure_valuation_request_item_options=lambda options: synced_options.extend(
+                options
+            ),
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            response = self.client.post(
+                "/api/crm/valuation-items",
+                json={"name": "Watches", "label": "Watches"},
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(synced_options, ["watches"])
+        self.assertEqual(response.get_json()["item"]["name"], "watches")
+
+    def test_add_valuation_item_rolls_back_when_attio_sync_fails(self):
+        def fail_sync(options):
+            raise RuntimeError("attio unavailable")
+
+        attio = types.SimpleNamespace(ensure_valuation_request_item_options=fail_sync)
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            response = self.client.post(
+                "/api/crm/valuation-items",
+                json={"name": "Watches", "label": "Watches"},
+            )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.get_json()["error"], "attio_option_sync_failed")
+
+        list_response = self.client.get("/api/crm/valuation-items")
+        item_names = [item["name"] for item in list_response.get_json()]
+        self.assertNotIn("watches", item_names)
+
     def test_attio_record_deleted_webhook_deletes_matching_valuation(self):
         attio = types.SimpleNamespace(
             create_attio_valuation_request=lambda **kwargs: "vr_deleted",

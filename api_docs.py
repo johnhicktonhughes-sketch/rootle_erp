@@ -387,6 +387,7 @@ OPENAPI_SPEC = {
                     "200": {"description": "Existing item reactivated or updated"},
                     "201": {"description": "Item created"},
                     "400": {"description": "Invalid payload"},
+                    "502": {"description": "Attio item category option sync failed"},
                 },
             },
         },
