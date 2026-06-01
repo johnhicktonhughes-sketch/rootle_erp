@@ -2,7 +2,7 @@ import hmac
 
 from flask import Flask, Response, jsonify, request
 
-from api_docs import DOCS_HTML, OPENAPI_SPEC
+from api_docs import DOCS_HTML, OPENAPI_SPEC, SWAGGER_UI_HTML
 from config import Config
 from database import db
 from routes.crm import crm_bp
@@ -72,6 +72,10 @@ def create_app(config_class=Config):
 
     @app.route("/docs")
     def docs():
+        return Response(SWAGGER_UI_HTML, mimetype="text/html")
+
+    @app.route("/docs/reference")
+    def docs_reference():
         return Response(DOCS_HTML, mimetype="text/html")
 
     @app.route("/openapi.json")
