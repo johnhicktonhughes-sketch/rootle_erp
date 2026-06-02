@@ -653,6 +653,67 @@ def submit_item_for_valuation():
     )
 
 
+@crm_bp.route("/crm/valuation-requests", methods=["GET"])
+def list_valuation_requests():
+    query = LeadValuation.query
+
+    status = _required_string(request.args, "status")
+    current_stage = _required_string(request.args, "current_stage")
+    person_record_id = (
+        _required_string(request.args, "attio_id")
+        or _required_string(request.args, "crm_person_record_id")
+        or _required_string(request.args, "crm_record_id")
+    )
+    crm_valuation_request_id = (
+        _required_string(request.args, "attio_valuation_request_id")
+        or _required_string(request.args, "crm_valuation_request_id")
+    )
+    rootle_request_id = _required_string(request.args, "rootle_request_id")
+    needs_mev = _bool_value(request.args, "needs_mev")
+
+    if status:
+        query = query.filter_by(status=status)
+    if current_stage:
+        query = query.filter_by(current_stage=current_stage)
+    if person_record_id:
+        query = query.filter_by(crm_person_record_id=person_record_id)
+    if crm_valuation_request_id:
+        query = query.filter_by(crm_valuation_request_id=crm_valuation_request_id)
+    if rootle_request_id:
+        query = query.filter_by(rootle_request_id=rootle_request_id)
+    if needs_mev:
+        query = query.filter(LeadValuation.latest_mev_amount.is_(None))
+
+    try:
+        limit = min(int(request.args.get("limit", 50)), 100)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_pagination"}), 400
+
+    total = query.count()
+    valuations = (
+        query.order_by(LeadValuation.created_at.desc(), LeadValuation.id.desc())
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    return jsonify(
+        {
+            "valuations": [_valuation_to_dict(valuation) for valuation in valuations],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+
+
+@crm_bp.route("/crm/valuation-requests/<int:valuation_id>", methods=["GET"])
+def get_valuation_request(valuation_id):
+    valuation = LeadValuation.query.get_or_404(valuation_id)
+    return jsonify({"valuation": _valuation_to_dict(valuation)})
+
+
 @crm_bp.route("/crm/valuation-requests/<int:valuation_id>/mev-calculations", methods=["POST"])
 def add_valuation_mev_calculation(valuation_id):
     valuation = LeadValuation.query.get_or_404(valuation_id)
@@ -731,6 +792,56 @@ def add_valuation_mev_calculation(valuation_id):
             }
         ),
         201,
+    )
+
+
+@crm_bp.route("/crm/valuation-requests/<int:valuation_id>/mev-sync", methods=["POST"])
+def sync_valuation_mev_to_attio(valuation_id):
+    valuation = LeadValuation.query.get_or_404(valuation_id)
+
+    missing_fields = [
+        field
+        for field, value in (
+            ("latest_mev_amount", valuation.latest_mev_amount),
+            ("latest_mev_currency", valuation.latest_mev_currency),
+            ("latest_mev_margin", valuation.latest_mev_margin),
+            ("latest_mev_calculated_at", valuation.latest_mev_calculated_at),
+        )
+        if value is None or value == ""
+    ]
+    if missing_fields:
+        return jsonify({"error": "missing_latest_mev", "fields": missing_fields}), 400
+
+    if not valuation.crm_valuation_request_id:
+        return (
+            jsonify(
+                {
+                    "error": "missing_crm_valuation_request_id",
+                    "message": "Valuation is not linked to an Attio valuation request.",
+                }
+            ),
+            400,
+        )
+
+    try:
+        from attio import update_attio_valuation_request_mev
+
+        update_attio_valuation_request_mev(
+            valuation_request_id=valuation.crm_valuation_request_id,
+            amount=valuation.latest_mev_amount,
+            currency=valuation.latest_mev_currency,
+            margin=valuation.latest_mev_margin,
+            calculated_at=valuation.latest_mev_calculated_at,
+        )
+    except Exception as exc:
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+    return jsonify(
+        {
+            "valuation": _valuation_to_dict(valuation),
+            "attio_valuation_request_id": valuation.crm_valuation_request_id,
+            "mev_synced": True,
+        }
     )
 
 

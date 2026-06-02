@@ -225,6 +225,70 @@ OPENAPI_SPEC = {
             }
         },
         "/api/crm/valuation-requests": {
+            "get": {
+                "summary": "List valuation requests",
+                "description": "Lists ERP LeadValuation cases for pricing queues and operations. Use needs_mev=true to find cases without a latest MEV snapshot.",
+                "parameters": [
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "current_stage",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "needs_mev",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean"},
+                    },
+                    {
+                        "name": "attio_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "crm_person_record_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "crm_valuation_request_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "rootle_request_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 50, "maximum": 100},
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 0},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Valuation request list"},
+                    "400": {"description": "Invalid pagination"},
+                },
+            },
             "post": {
                 "summary": "Create a valuation request",
                 "description": "Creates one ERP LeadValuation and one linked Attio valuation_requests record. Valid item values come from GET /api/crm/valuation-items.",
@@ -269,6 +333,24 @@ OPENAPI_SPEC = {
                 },
             }
         },
+        "/api/crm/valuation-requests/{valuation_id}": {
+            "get": {
+                "summary": "Get a valuation request",
+                "description": "Returns the ERP valuation case with MEV calculation history, inbound labels, and label eligibility.",
+                "parameters": [
+                    {
+                        "name": "valuation_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Valuation request details"},
+                    "404": {"description": "Valuation not found"},
+                },
+            }
+        },
         "/api/crm/valuation-requests/{valuation_id}/mev-calculations": {
             "post": {
                 "summary": "Create an MEV calculation",
@@ -305,6 +387,26 @@ OPENAPI_SPEC = {
                 "responses": {
                     "201": {"description": "MEV calculation created"},
                     "400": {"description": "Invalid payload"},
+                    "404": {"description": "Valuation not found"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/crm/valuation-requests/{valuation_id}/mev-sync": {
+            "post": {
+                "summary": "Retry Attio MEV sync",
+                "description": "Mirrors the latest ERP MEV snapshot to the linked Attio valuation_requests record without creating a new audit calculation.",
+                "parameters": [
+                    {
+                        "name": "valuation_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Latest MEV snapshot synced to Attio"},
+                    "400": {"description": "Missing latest MEV snapshot or Attio link"},
                     "404": {"description": "Valuation not found"},
                     "502": {"description": "Attio sync failed"},
                 },
@@ -759,6 +861,20 @@ DOCS_HTML = """<!doctype html>
         </div>
       </article>
       <article class="endpoint">
+        <span class="method get">GET</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests</code></h3>
+          <p class="meta">List ERP valuation cases for pricing queues. Filter with <code>needs_mev=true</code>, <code>status</code>, <code>current_stage</code>, person id, Attio valuation request id, or Rootle request id.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method get">GET</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/{valuation_id}</code></h3>
+          <p class="meta">Get one valuation case with MEV history, inbound labels, and label eligibility.</p>
+        </div>
+      </article>
+      <article class="endpoint">
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-calculations</code></h3>
@@ -770,6 +886,13 @@ DOCS_HTML = """<!doctype html>
   "calculation_method": "manual",
   "calculated_by": "pricing-agent"
 }</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-sync</code></h3>
+          <p class="meta">Retry mirroring the latest ERP MEV snapshot to Attio without creating a new MEV calculation row.</p>
         </div>
       </article>
       <article class="endpoint">

@@ -45,7 +45,9 @@ The API will start on `http://127.0.0.1:5000`.
 - `POST /api/companies`
 - `GET /api/journey-phases`
 - `POST /api/crm/leads/stage-1`
+- `GET /api/crm/valuation-requests`
 - `POST /api/crm/valuation-requests`
+- `GET /api/crm/valuation-requests/<id>`
 - `POST /api/crm/contact-details`
 - `POST /api/webhooks/attio`
 
@@ -103,6 +105,10 @@ It creates the `Valuation Request` object with attributes for:
 - `rootle_posthog_distinct_id`
 - `source`
 - `stage_3_completed_at`
+- `latest_mev_amount`
+- `latest_mev_currency`
+- `latest_mev_margin`
+- `latest_mev_calculated_at`
 
 ### Item submission / valuation request
 
@@ -194,6 +200,33 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
 currency, margin, and calculation timestamp are also stored on `lead_valuations`
 and mirrored to the linked Attio `valuation_requests` record.
+
+Pricing workers can list ERP valuation cases that are waiting for an MEV:
+
+```http
+GET /api/crm/valuation-requests?needs_mev=true
+```
+
+Supported filters include `status`, `current_stage`, `needs_mev`,
+`attio_id`/`crm_person_record_id`, `crm_valuation_request_id`,
+`rootle_request_id`, `limit`, and `offset`.
+
+One valuation case can be fetched with:
+
+```http
+GET /api/crm/valuation-requests/{valuation_id}
+```
+
+If the latest ERP MEV snapshot needs to be sent to Attio again without creating a
+new audit calculation row, call:
+
+```http
+POST /api/crm/valuation-requests/{valuation_id}/mev-sync
+```
+
+The sync retry requires `latest_mev_amount`, `latest_mev_currency`,
+`latest_mev_margin`, and `latest_mev_calculated_at` to already exist on the ERP
+valuation.
 
 ### Inbound labels
 

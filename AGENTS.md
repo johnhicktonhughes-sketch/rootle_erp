@@ -25,6 +25,7 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
 - Added CORS support for the Lovable website at `https://rootle-analytics.lovable.app`
 - Added event-based website form intake for identity capture, item submissions, and contact details
 - Added Attio `valuation_requests` custom object setup and ERP valuation case support
+- Added valuation request queue/detail endpoints and an Attio MEV sync retry endpoint
 
 ## Current schema coverage
 
@@ -85,6 +86,11 @@ The current website form model is event-based rather than stage-order dependent.
   - Creates one ERP `LeadValuation` case
   - Supports one person having many valuation requests
   - Dedupes by `rootle_request_id`
+- Valuation request queried:
+  - Endpoint: `GET /api/crm/valuation-requests`
+  - Supports pricing queue filters including `needs_mev=true`, `status`, `current_stage`, person id, Attio valuation request id, Rootle request id, `limit`, and `offset`
+  - Endpoint: `GET /api/crm/valuation-requests/{valuation_id}`
+  - Returns one ERP valuation case with MEV history, inbound labels, and label eligibility
 - Contact details captured:
   - Endpoint: `POST /api/crm/contact-details`
   - Payload: Attio person id, email, address fields
@@ -109,6 +115,9 @@ When a `LeadValuation` is ready for pricing, the ERP can store a minimum expecte
 - The latest MEV snapshot is mirrored to the linked Attio `valuation_requests` record at calculation time
 - Attio only holds the latest MEV fields; each new calculation overwrites the previous MEV values in Attio
 - The ERP remains the historical source of truth for previous MEV calculations
+- Endpoint: `POST /api/crm/valuation-requests/{valuation_id}/mev-sync`
+- MEV sync retries mirror the latest ERP snapshot back to Attio without creating a new audit row
+- MEV sync retry requires the ERP valuation to already have a latest MEV amount, currency, margin, calculated timestamp, and linked Attio valuation request id
 
 ## Next planned steps
 
