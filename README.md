@@ -105,6 +105,7 @@ It creates the `Valuation Request` object with attributes for:
 - `rootle_posthog_distinct_id`
 - `source`
 - `stage_3_completed_at`
+- `pricing_status`
 - `latest_mev_amount`
 - `latest_mev_currency`
 - `latest_mev_margin`
@@ -199,7 +200,10 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
 currency, margin, and calculation timestamp are also stored on `lead_valuations`
-and mirrored to the linked Attio `valuation_requests` record.
+and mirrored to the linked Attio `valuation_requests` record. MEV calculation
+also changes `pricing_status` from `pricing_pending` to `mev_calculated`; it does
+not change `rootle_stage`, which remains the customer data completeness signal
+(`stage-2` without address details, `stage-3` with address details).
 
 Pricing workers can list ERP valuation cases that are waiting for an MEV:
 
@@ -207,7 +211,7 @@ Pricing workers can list ERP valuation cases that are waiting for an MEV:
 GET /api/crm/valuation-requests?needs_mev=true
 ```
 
-Supported filters include `status`, `current_stage`, `needs_mev`,
+Supported filters include `status`, `current_stage`, `pricing_status`, `needs_mev`,
 `attio_id`/`crm_person_record_id`, `crm_valuation_request_id`,
 `rootle_request_id`, `limit`, and `offset`.
 

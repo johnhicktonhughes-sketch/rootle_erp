@@ -170,6 +170,7 @@ class LeadValuation(db.Model, TimestampMixin):
     latest_mev_currency = db.Column(db.String(3))
     latest_mev_margin = db.Column(db.Numeric(7, 4))
     latest_mev_calculated_at = db.Column(db.DateTime)
+    pricing_status = db.Column(db.String(64), default="pricing_pending", nullable=False)
     status = db.Column(db.String(64), default="valuation_requested", nullable=False)
     current_stage = db.Column(db.String(64), default="item_submitted", nullable=False)
     source = db.Column(db.String(128))

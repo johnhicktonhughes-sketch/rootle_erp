@@ -34,6 +34,7 @@ ATTIO_VALUATION_REQUEST_OBJECT_SLUG = os.getenv(
 )
 ROOTLE_STAGE_OPTIONS = ("stage-1", "stage-2", "stage-3")
 VALUATION_REQUEST_STAGE_OPTIONS = ("stage-2", "stage-3", "closed")
+VALUATION_REQUEST_PRICING_STATUS_OPTIONS = ("pricing_pending", "mev_calculated")
 VALUATION_REQUEST_ITEM_OPTIONS = ("gold", "silver", "coins")
 VALUATION_REQUEST_ATTRIBUTES = (
     {
@@ -132,6 +133,16 @@ VALUATION_REQUEST_ATTRIBUTES = (
         "description": "Timestamp when this valuation request completed Stage 3.",
         "type": "timestamp",
         "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Pricing Status",
+        "api_slug": "pricing_status",
+        "description": "Current pricing workflow state for this valuation request.",
+        "type": "select",
+        "is_required": True,
         "is_unique": False,
         "is_multiselect": False,
         "config": {},
@@ -404,6 +415,7 @@ def _valuation_request_values(
         "item_categories": item_categories,
         "item_photo_url": item_photo_url,
         "rootle_stage": "stage-2",
+        "pricing_status": "pricing_pending",
         "person": [
             {
                 "target_object": ATTIO_OBJECT_SLUG,
@@ -701,6 +713,11 @@ def ensure_valuation_request_object() -> dict:
         "rootle_stage",
         VALUATION_REQUEST_STAGE_OPTIONS,
     )
+    _ensure_select_options(
+        ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
+        "pricing_status",
+        VALUATION_REQUEST_PRICING_STATUS_OPTIONS,
+    )
 
     return {
         "object": valuation_request_object,
@@ -984,6 +1001,7 @@ def update_attio_valuation_request_mev(
     currency: str,
     margin,
     calculated_at: datetime,
+    pricing_status: str = "mev_calculated",
 ) -> str | None:
     if not valuation_request_id:
         return valuation_request_id
@@ -996,6 +1014,7 @@ def update_attio_valuation_request_mev(
                 "latest_mev_currency": currency,
                 "latest_mev_margin": float(margin),
                 "latest_mev_calculated_at": calculated_at.isoformat(),
+                "pricing_status": pricing_status,
             }
         }
     }

@@ -70,6 +70,7 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertFalse(data["erp_valuation_created"])
         self.assertTrue(data["erp_valuation_updated"])
         self.assertEqual(data["valuation"]["item_categories"], ["gold", "coins", "silver"])
+        self.assertEqual(data["valuation"]["pricing_status"], "pricing_pending")
 
     def test_item_categories_accept_comma_separated_string(self):
         attio = types.SimpleNamespace(
@@ -264,12 +265,14 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(data["valuation"]["latest_mev_currency"], "GBP")
         self.assertEqual(data["valuation"]["latest_mev_margin"], "0.3500")
         self.assertEqual(data["valuation"]["status"], "mev_calculated")
+        self.assertEqual(data["valuation"]["pricing_status"], "mev_calculated")
         self.assertEqual(len(data["valuation"]["mev_calculations"]), 2)
         self.assertEqual(len(attio_mev_updates), 2)
         self.assertEqual(attio_mev_updates[-1]["valuation_request_id"], "vr_mev")
         self.assertEqual(str(attio_mev_updates[-1]["amount"]), "90.00")
         self.assertEqual(attio_mev_updates[-1]["currency"], "GBP")
         self.assertEqual(str(attio_mev_updates[-1]["margin"]), "0.3500")
+        self.assertEqual(attio_mev_updates[-1]["pricing_status"], "mev_calculated")
 
     def test_mev_calculation_requires_amount_currency_and_margin(self):
         attio = types.SimpleNamespace(
@@ -387,6 +390,7 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(len(attio_mev_updates), 2)
         self.assertEqual(attio_mev_updates[-1]["valuation_request_id"], "vr_retry")
         self.assertEqual(str(attio_mev_updates[-1]["amount"]), "75.00")
+        self.assertEqual(attio_mev_updates[-1]["pricing_status"], "mev_calculated")
 
     def test_inbound_label_requires_eligible_mev_and_returns_scan_context(self):
         attio = types.SimpleNamespace(

@@ -659,6 +659,7 @@ def list_valuation_requests():
 
     status = _required_string(request.args, "status")
     current_stage = _required_string(request.args, "current_stage")
+    pricing_status = _required_string(request.args, "pricing_status")
     person_record_id = (
         _required_string(request.args, "attio_id")
         or _required_string(request.args, "crm_person_record_id")
@@ -675,6 +676,8 @@ def list_valuation_requests():
         query = query.filter_by(status=status)
     if current_stage:
         query = query.filter_by(current_stage=current_stage)
+    if pricing_status:
+        query = query.filter_by(pricing_status=pricing_status)
     if person_record_id:
         query = query.filter_by(crm_person_record_id=person_record_id)
     if crm_valuation_request_id:
@@ -763,6 +766,7 @@ def add_valuation_mev_calculation(valuation_id):
     valuation.latest_mev_currency = currency
     valuation.latest_mev_margin = margin
     valuation.latest_mev_calculated_at = calculated_at
+    valuation.pricing_status = "mev_calculated"
     valuation.status = "mev_calculated"
 
     db.session.add(calculation)
@@ -777,6 +781,7 @@ def add_valuation_mev_calculation(valuation_id):
             currency=currency,
             margin=margin,
             calculated_at=calculated_at,
+            pricing_status=valuation.pricing_status,
         )
     except Exception as exc:
         db.session.rollback()
@@ -832,6 +837,7 @@ def sync_valuation_mev_to_attio(valuation_id):
             currency=valuation.latest_mev_currency,
             margin=valuation.latest_mev_margin,
             calculated_at=valuation.latest_mev_calculated_at,
+            pricing_status=valuation.pricing_status,
         )
     except Exception as exc:
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
