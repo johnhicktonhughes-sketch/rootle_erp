@@ -12,6 +12,7 @@ from database import db
 from models import (
     Company,
     Contact,
+    FailedValuationRequestSubmission,
     JourneyPhase,
     InboundLabel,
     Lead,
@@ -38,6 +39,20 @@ def _required_string(payload, key):
         return None
     value = str(value).strip()
     return value or None
+
+
+def _sync_person_posthog_distinct_id(*, person_record_id, posthog_distinct_id):
+    if not person_record_id or not posthog_distinct_id:
+        return
+
+    import attio
+
+    sync = getattr(attio, "update_attio_person_posthog_distinct_id", None)
+    if sync:
+        sync(
+            person_record_id=person_record_id,
+            posthog_distinct_id=posthog_distinct_id,
+        )
 
 
 def _string_list(payload, *keys):
@@ -76,6 +91,32 @@ def _valuation_to_dict(valuation):
     data["inbound_labels"] = [_label_to_dict(label) for label in valuation.inbound_labels]
     data["label_eligibility"] = _label_eligibility_for_valuation(valuation)
     return data
+
+
+def _failed_valuation_request_submission_to_dict(submission):
+    return submission.to_dict()
+
+
+def _record_failed_valuation_request_submission(
+    *,
+    payload,
+    normalised_payload,
+    error_type,
+    error_message,
+):
+    db.session.rollback()
+    submission = FailedValuationRequestSubmission(
+        rootle_request_id=(normalised_payload or {}).get("rootle_request_id"),
+        crm_person_record_id=(normalised_payload or {}).get("crm_person_record_id"),
+        posthog_distinct_id=(normalised_payload or {}).get("posthog_distinct_id"),
+        payload=payload or {},
+        normalised_payload=normalised_payload,
+        error_type=error_type,
+        error_message=str(error_message),
+    )
+    db.session.add(submission)
+    db.session.commit()
+    return submission
 
 
 def _mev_calculation_to_dict(calculation):
@@ -635,6 +676,17 @@ def submit_item_for_valuation():
     source = _required_string(payload, "source") or "lovable"
     valuation_guide_id = _required_string(payload, "valuation_guide_id")
     valuation_guide_url = _required_string(payload, "valuation_guide_url")
+    normalised_payload = {
+        "crm_person_record_id": person_record_id,
+        "item_categories": item_categories,
+        "item_photo_url": item_photo_url,
+        "posthog_distinct_id": posthog_distinct_id,
+        "rootle_request_id": rootle_request_id,
+        "source": source,
+        "valuation_guide_id": valuation_guide_id,
+        "valuation_guide_url": valuation_guide_url,
+        "metadata": payload.get("metadata"),
+    }
 
     missing_fields = [
         field
@@ -651,6 +703,7 @@ def submit_item_for_valuation():
     item_categories = [_category_slug(category) for category in item_categories]
     item_categories = [category for category in item_categories if category]
     item_categories = _merge_unique_values([], item_categories)
+    normalised_payload["item_categories"] = item_categories
     if not item_categories:
         return jsonify({"error": "missing_required_fields", "fields": ["item_categories"]}), 400
 
@@ -673,8 +726,14 @@ def submit_item_for_valuation():
     existing = LeadValuation.query.filter_by(rootle_request_id=rootle_request_id).first()
     if existing:
         merged_categories = _merge_unique_values(existing.item_categories, item_categories)
-        erp_valuation_updated = merged_categories != (existing.item_categories or [])
-        if erp_valuation_updated:
+        posthog_valuation_updated = bool(posthog_distinct_id and not existing.posthog_distinct_id)
+        if posthog_distinct_id and not existing.posthog_distinct_id:
+            existing.posthog_distinct_id = posthog_distinct_id
+        erp_valuation_updated = (
+            merged_categories != (existing.item_categories or [])
+            or posthog_valuation_updated
+        )
+        if erp_valuation_updated or posthog_distinct_id:
             try:
                 from attio import update_attio_valuation_request
 
@@ -684,13 +743,34 @@ def submit_item_for_valuation():
                     rootle_request_id=existing.rootle_request_id,
                     item_categories=merged_categories,
                     item_photo_url=existing.item_photo_url,
-                    posthog_distinct_id=existing.posthog_distinct_id,
+                    posthog_distinct_id=existing.posthog_distinct_id or posthog_distinct_id,
                     valuation_guide_id=existing.valuation_guide_id,
                     valuation_guide_url=existing.valuation_guide_url,
                     source=existing.source,
                 )
+                _sync_person_posthog_distinct_id(
+                    person_record_id=existing.crm_person_record_id,
+                    posthog_distinct_id=existing.posthog_distinct_id or posthog_distinct_id,
+                )
             except Exception as exc:
-                return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+                failed_submission = _record_failed_valuation_request_submission(
+                    payload=payload,
+                    normalised_payload=normalised_payload,
+                    error_type="crm_sync_failed",
+                    error_message=exc,
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": "crm_sync_failed",
+                            "message": str(exc),
+                            "failed_submission": _failed_valuation_request_submission_to_dict(
+                                failed_submission
+                            ),
+                        }
+                    ),
+                    502,
+                )
 
             existing.item_categories = merged_categories
             db.session.commit()
@@ -710,6 +790,10 @@ def submit_item_for_valuation():
     try:
         from attio import create_attio_valuation_request
 
+        _sync_person_posthog_distinct_id(
+            person_record_id=person_record_id,
+            posthog_distinct_id=posthog_distinct_id,
+        )
         crm_valuation_request_id = create_attio_valuation_request(
             person_record_id=person_record_id,
             rootle_request_id=rootle_request_id,
@@ -721,7 +805,24 @@ def submit_item_for_valuation():
             source=source,
         )
     except Exception as exc:
-        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+        failed_submission = _record_failed_valuation_request_submission(
+            payload=payload,
+            normalised_payload=normalised_payload,
+            error_type="crm_sync_failed",
+            error_message=exc,
+        )
+        return (
+            jsonify(
+                {
+                    "error": "crm_sync_failed",
+                    "message": str(exc),
+                    "failed_submission": _failed_valuation_request_submission_to_dict(
+                        failed_submission
+                    ),
+                }
+            ),
+            502,
+        )
 
     valuation = LeadValuation(
         crm_person_record_id=person_record_id,
@@ -806,6 +907,207 @@ def list_valuation_requests():
             "offset": offset,
         }
     )
+
+
+@crm_bp.route("/crm/valuation-request-failures", methods=["GET"])
+def list_failed_valuation_request_submissions():
+    query = FailedValuationRequestSubmission.query
+
+    status = _required_string(request.args, "status")
+    rootle_request_id = _required_string(request.args, "rootle_request_id")
+    person_record_id = (
+        _required_string(request.args, "attio_id")
+        or _required_string(request.args, "crm_person_record_id")
+        or _required_string(request.args, "crm_record_id")
+    )
+
+    if status:
+        query = query.filter_by(status=status)
+    if rootle_request_id:
+        query = query.filter_by(rootle_request_id=rootle_request_id)
+    if person_record_id:
+        query = query.filter_by(crm_person_record_id=person_record_id)
+
+    try:
+        limit = min(int(request.args.get("limit", 50)), 100)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_pagination"}), 400
+
+    total = query.count()
+    submissions = (
+        query.order_by(
+            FailedValuationRequestSubmission.created_at.desc(),
+            FailedValuationRequestSubmission.id.desc(),
+        )
+        .limit(limit)
+        .offset(offset)
+        .all()
+    )
+
+    return jsonify(
+        {
+            "failed_submissions": [
+                _failed_valuation_request_submission_to_dict(submission)
+                for submission in submissions
+            ],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+
+
+@crm_bp.route("/crm/valuation-request-failures/<int:submission_id>", methods=["GET"])
+def get_failed_valuation_request_submission(submission_id):
+    submission = FailedValuationRequestSubmission.query.get_or_404(submission_id)
+    return jsonify(
+        {
+            "failed_submission": _failed_valuation_request_submission_to_dict(
+                submission
+            )
+        }
+    )
+
+
+@crm_bp.route("/crm/valuation-request-failures/<int:submission_id>/retry", methods=["POST"])
+def retry_failed_valuation_request_submission(submission_id):
+    submission = FailedValuationRequestSubmission.query.get_or_404(submission_id)
+    if submission.status == "resolved":
+        return (
+            jsonify(
+                {
+                    "error": "failed_submission_already_resolved",
+                    "failed_submission": _failed_valuation_request_submission_to_dict(
+                        submission
+                    ),
+                }
+            ),
+            409,
+        )
+
+    normalised_payload = submission.normalised_payload or {}
+    required_fields = [
+        "crm_person_record_id",
+        "item_categories",
+        "item_photo_url",
+        "rootle_request_id",
+    ]
+    missing_fields = [
+        field for field in required_fields if not normalised_payload.get(field)
+    ]
+    if missing_fields:
+        submission.status = "invalid_payload"
+        submission.error_type = "missing_required_fields"
+        submission.error_message = f"Missing replay fields: {', '.join(missing_fields)}"
+        submission.retry_count += 1
+        submission.last_retry_at = datetime.utcnow()
+        db.session.commit()
+        return (
+            jsonify(
+                {
+                    "error": "missing_required_fields",
+                    "fields": missing_fields,
+                    "failed_submission": _failed_valuation_request_submission_to_dict(
+                        submission
+                    ),
+                }
+            ),
+            400,
+        )
+
+    existing = LeadValuation.query.filter_by(
+        rootle_request_id=normalised_payload["rootle_request_id"]
+    ).first()
+    if existing:
+        submission.status = "resolved"
+        submission.resolved_at = datetime.utcnow()
+        submission.valuation_request_id = existing.id
+        submission.crm_valuation_request_id = existing.crm_valuation_request_id
+        db.session.commit()
+        return jsonify(
+            {
+                "valuation": _valuation_to_dict(existing),
+                "failed_submission": _failed_valuation_request_submission_to_dict(
+                    submission
+                ),
+                "replayed": False,
+                "reason": "valuation_request_already_exists",
+            }
+        )
+
+    submission.retry_count += 1
+    submission.last_retry_at = datetime.utcnow()
+    submission.status = "retrying"
+    db.session.commit()
+
+    try:
+        from attio import create_attio_valuation_request
+
+        _sync_person_posthog_distinct_id(
+            person_record_id=normalised_payload["crm_person_record_id"],
+            posthog_distinct_id=normalised_payload.get("posthog_distinct_id"),
+        )
+        crm_valuation_request_id = create_attio_valuation_request(
+            person_record_id=normalised_payload["crm_person_record_id"],
+            rootle_request_id=normalised_payload["rootle_request_id"],
+            item_categories=normalised_payload["item_categories"],
+            item_photo_url=normalised_payload["item_photo_url"],
+            posthog_distinct_id=normalised_payload.get("posthog_distinct_id"),
+            valuation_guide_id=normalised_payload.get("valuation_guide_id"),
+            valuation_guide_url=normalised_payload.get("valuation_guide_url"),
+            source=normalised_payload.get("source"),
+        )
+    except Exception as exc:
+        db.session.rollback()
+        submission = FailedValuationRequestSubmission.query.get_or_404(submission_id)
+        submission.status = "pending_retry"
+        submission.error_type = "crm_sync_failed"
+        submission.error_message = str(exc)
+        db.session.commit()
+        return (
+            jsonify(
+                {
+                    "error": "crm_sync_failed",
+                    "message": str(exc),
+                    "failed_submission": _failed_valuation_request_submission_to_dict(
+                        submission
+                    ),
+                }
+            ),
+            502,
+        )
+
+    valuation = LeadValuation(
+        crm_person_record_id=normalised_payload["crm_person_record_id"],
+        crm_valuation_request_id=crm_valuation_request_id,
+        rootle_request_id=normalised_payload["rootle_request_id"],
+        posthog_distinct_id=normalised_payload.get("posthog_distinct_id"),
+        item_categories=normalised_payload["item_categories"],
+        item_photo_url=normalised_payload["item_photo_url"],
+        valuation_guide_id=normalised_payload.get("valuation_guide_id"),
+        valuation_guide_url=normalised_payload.get("valuation_guide_url"),
+        source=normalised_payload.get("source"),
+        meta=normalised_payload.get("metadata"),
+    )
+    db.session.add(valuation)
+    db.session.flush()
+
+    submission.status = "resolved"
+    submission.resolved_at = datetime.utcnow()
+    submission.valuation_request_id = valuation.id
+    submission.crm_valuation_request_id = crm_valuation_request_id
+    db.session.commit()
+
+    return jsonify(
+        {
+            "valuation": _valuation_to_dict(valuation),
+            "failed_submission": _failed_valuation_request_submission_to_dict(
+                submission
+            ),
+            "replayed": True,
+        }
+    ), 201
 
 
 @crm_bp.route("/crm/valuation-requests/<int:valuation_id>", methods=["GET"])

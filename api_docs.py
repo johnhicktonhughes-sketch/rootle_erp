@@ -329,7 +329,90 @@ OPENAPI_SPEC = {
                     "200": {"description": "Duplicate request id returned existing valuation"},
                     "201": {"description": "Valuation request created"},
                     "400": {"description": "Invalid payload"},
-                    "502": {"description": "Attio sync failed"},
+                    "502": {
+                        "description": "Attio sync failed; response includes failed_submission for replay"
+                    },
+                },
+            }
+        },
+        "/api/crm/valuation-request-failures": {
+            "get": {
+                "summary": "List failed valuation request submissions",
+                "description": "Lists stage-2 valuation request submissions that failed during ERP or Attio processing and can be retried.",
+                "parameters": [
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "rootle_request_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "crm_person_record_id",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 50, "maximum": 100},
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "default": 0},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Failed submission list"},
+                    "400": {"description": "Invalid pagination"},
+                },
+            }
+        },
+        "/api/crm/valuation-request-failures/{submission_id}": {
+            "get": {
+                "summary": "Get a failed valuation request submission",
+                "description": "Returns the stored failed stage-2 payload, normalized replay payload, and latest failure status.",
+                "parameters": [
+                    {
+                        "name": "submission_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Failed submission detail"},
+                    "404": {"description": "Failed submission not found"},
+                },
+            }
+        },
+        "/api/crm/valuation-request-failures/{submission_id}/retry": {
+            "post": {
+                "summary": "Retry a failed valuation request submission",
+                "description": "Replays a stored stage-2 submission into Attio and creates the ERP valuation request when the sync succeeds.",
+                "parameters": [
+                    {
+                        "name": "submission_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Existing valuation request matched"},
+                    "201": {"description": "Failed submission replayed"},
+                    "400": {"description": "Stored payload is not replayable"},
+                    "409": {"description": "Failed submission already resolved"},
+                    "502": {"description": "Retry failed during Attio sync"},
                 },
             }
         },
@@ -872,6 +955,20 @@ DOCS_HTML = """<!doctype html>
         <div>
           <h3><code>/api/crm/valuation-requests/{valuation_id}</code></h3>
           <p class="meta">Get one valuation case with MEV history, inbound labels, and label eligibility.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method get">GET</span>
+        <div>
+          <h3><code>/api/crm/valuation-request-failures</code></h3>
+          <p class="meta">List failed stage-2 payloads stored for investigation and replay. Filter with <code>status</code>, person id, or Rootle request id.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-request-failures/{submission_id}/retry</code></h3>
+          <p class="meta">Replay a stored stage-2 submission into Attio and create the ERP valuation request when sync succeeds.</p>
         </div>
       </article>
       <article class="endpoint">

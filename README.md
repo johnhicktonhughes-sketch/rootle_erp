@@ -48,6 +48,8 @@ The API will start on `http://127.0.0.1:5000`.
 - `GET /api/crm/valuation-requests`
 - `POST /api/crm/valuation-requests`
 - `GET /api/crm/valuation-requests/<id>`
+- `GET /api/crm/valuation-request-failures`
+- `POST /api/crm/valuation-request-failures/<id>/retry`
 - `POST /api/crm/contact-details`
 - `POST /api/webhooks/attio`
 - `POST /api/admin/reset-data`
@@ -141,6 +143,16 @@ Each item submission creates its own ERP `valuation_requests` record and its own
 `valuation_requests` record. Reusing the same `rootle_request_id` merges any newly
 submitted item categories into the existing ERP valuation instead of creating a
 duplicate.
+
+If the ERP cannot sync a valid item submission to Attio, the endpoint returns
+`502` with `error: "crm_sync_failed"` and a `failed_submission` object. The failed
+payload is stored in `failed_valuation_request_submissions` for investigation and
+replay.
+
+```http
+GET /api/crm/valuation-request-failures?status=pending_retry
+POST /api/crm/valuation-request-failures/{failed_submission_id}/retry
+```
 
 ### Attio deletion sync
 

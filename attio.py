@@ -927,6 +927,10 @@ def get_or_create_attio_stage_1_lead(
 ) -> dict:
     existing_record_id = find_attio_person_by_phone(phone_number)
     if existing_record_id:
+        update_attio_person_posthog_distinct_id(
+            person_record_id=existing_record_id,
+            posthog_distinct_id=posthog_distinct_id,
+        )
         return {"record_id": existing_record_id, "created": False}
 
     record_id = create_attio_stage_1_lead(
@@ -1131,6 +1135,40 @@ def update_attio_person_contact_details(
     )
     _record_attio_result(
         entity_type="person_contact_details",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return person_record_id
+
+
+def update_attio_person_posthog_distinct_id(
+    *,
+    person_record_id: str,
+    posthog_distinct_id: str | None,
+) -> str:
+    if not posthog_distinct_id or not str(posthog_distinct_id).strip():
+        return person_record_id
+
+    ensure_marketing_attribution_attributes()
+    payload = {
+        "data": {
+            "values": {
+                "rootle_posthog_distinct_id": str(posthog_distinct_id).strip(),
+            }
+        }
+    }
+    response = requests.patch(
+        _attio_url(f"objects/{ATTIO_OBJECT_SLUG}/records/{person_record_id}"),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="person_posthog_distinct_id",
         payload=payload,
         response=response,
     )

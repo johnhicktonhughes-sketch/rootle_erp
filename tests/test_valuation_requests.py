@@ -95,6 +95,94 @@ class ValuationRequestTests(unittest.TestCase):
             ["gold", "coins"],
         )
 
+    def test_failed_valuation_request_submission_is_stored_for_retry(self):
+        def fail_create(**kwargs):
+            raise RuntimeError("attio unavailable")
+
+        attio = types.SimpleNamespace(create_attio_valuation_request=fail_create)
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_failed",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "posthog_distinct_id": "ph_failed",
+                    "rootle_request_id": "request_failed",
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        data = response.get_json()
+        self.assertEqual(data["error"], "crm_sync_failed")
+        self.assertIn("attio unavailable", data["message"])
+        self.assertEqual(
+            data["failed_submission"]["rootle_request_id"],
+            "request_failed",
+        )
+        self.assertEqual(data["failed_submission"]["status"], "pending_retry")
+
+        from models import FailedValuationRequestSubmission, LeadValuation
+
+        failed_submission = FailedValuationRequestSubmission.query.one()
+        self.assertEqual(failed_submission.crm_person_record_id, "person_failed")
+        self.assertEqual(failed_submission.posthog_distinct_id, "ph_failed")
+        self.assertEqual(
+            failed_submission.normalised_payload["item_categories"],
+            ["gold"],
+        )
+        self.assertEqual(LeadValuation.query.count(), 0)
+
+    def test_failed_valuation_request_submission_can_be_retried(self):
+        def fail_create(**kwargs):
+            raise RuntimeError("attio unavailable")
+
+        attio = types.SimpleNamespace(create_attio_valuation_request=fail_create)
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            failed_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_retry_stage_2",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "posthog_distinct_id": "ph_retry",
+                    "rootle_request_id": "request_retry_stage_2",
+                },
+            )
+
+        failed_submission_id = failed_response.get_json()["failed_submission"]["id"]
+        retry_payloads = []
+
+        def create_attio_valuation_request(**kwargs):
+            retry_payloads.append(kwargs)
+            return "vr_replayed"
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=create_attio_valuation_request,
+            update_attio_person_posthog_distinct_id=lambda **kwargs: None,
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            retry_response = self.client.post(
+                f"/api/crm/valuation-request-failures/{failed_submission_id}/retry"
+            )
+
+        self.assertEqual(retry_response.status_code, 201)
+        data = retry_response.get_json()
+        self.assertTrue(data["replayed"])
+        self.assertEqual(data["valuation"]["crm_valuation_request_id"], "vr_replayed")
+        self.assertEqual(data["failed_submission"]["status"], "resolved")
+        self.assertEqual(data["failed_submission"]["retry_count"], 1)
+        self.assertEqual(retry_payloads[0]["rootle_request_id"], "request_retry_stage_2")
+
+        from models import FailedValuationRequestSubmission, LeadValuation
+
+        failed_submission = FailedValuationRequestSubmission.query.get(failed_submission_id)
+        valuation = LeadValuation.query.one()
+        self.assertEqual(failed_submission.valuation_request_id, valuation.id)
+
     def test_add_valuation_item_syncs_attio_option(self):
         synced_options = []
 

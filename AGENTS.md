@@ -39,12 +39,13 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
 - WebsiteEvent
 - SlackMessage
 - IntegrationLog
+- FailedValuationRequestSubmission
 
 ## Database
 
 - PostgreSQL is now the target database for the ERP
 - Configuration expects `DATABASE_URL` for the Postgres connection
-- Latest Alembic head is `f7a8b9c0d1e2`
+- Latest Alembic head is `a8b9c0d1e2f3`
 
 ## Attio integration
 
@@ -84,6 +85,8 @@ The current website form model is event-based rather than stage-order dependent.
   - Payload: Attio person id, item categories, item photo URL, optional PostHog id and valuation guide fields
   - Creates one Attio `valuation_requests` record
   - Creates one ERP `valuation_requests` case
+  - Stores valid submissions that fail Attio/ERP sync in `failed_valuation_request_submissions`
+  - Failed submissions can be listed via `GET /api/crm/valuation-request-failures` and replayed via `POST /api/crm/valuation-request-failures/{id}/retry`
   - Supports one person having many valuation requests
   - Dedupes by `rootle_request_id`
 - Valuation request queried:

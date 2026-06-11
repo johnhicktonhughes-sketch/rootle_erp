@@ -199,6 +199,27 @@ class LeadValuation(db.Model, TimestampMixin):
     )
 
 
+class FailedValuationRequestSubmission(db.Model, TimestampMixin):
+    __tablename__ = "failed_valuation_request_submissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    rootle_request_id = db.Column(db.String(128), index=True)
+    crm_person_record_id = db.Column(db.String(128), index=True)
+    posthog_distinct_id = db.Column(db.String(256))
+    payload = db.Column(db.JSON, nullable=False)
+    normalised_payload = db.Column(db.JSON)
+    error_type = db.Column(db.String(128), nullable=False)
+    error_message = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(64), default="pending_retry", nullable=False)
+    retry_count = db.Column(db.Integer, default=0, nullable=False)
+    last_retry_at = db.Column(db.DateTime)
+    resolved_at = db.Column(db.DateTime)
+    valuation_request_id = db.Column(db.Integer, db.ForeignKey("valuation_requests.id"))
+    crm_valuation_request_id = db.Column(db.String(128))
+
+    valuation_request = db.relationship("LeadValuation")
+
+
 class LeadValuationMevCalculation(db.Model, TimestampMixin):
     __tablename__ = "lead_valuation_mev_calculations"
 
