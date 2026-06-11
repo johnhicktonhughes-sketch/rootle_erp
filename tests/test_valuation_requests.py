@@ -5,6 +5,7 @@ import json
 import sys
 import types
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -182,6 +183,159 @@ class ValuationRequestTests(unittest.TestCase):
         failed_submission = FailedValuationRequestSubmission.query.get(failed_submission_id)
         valuation = LeadValuation.query.one()
         self.assertEqual(failed_submission.valuation_request_id, valuation.id)
+
+    def test_contact_details_do_not_send_invalid_attio_location_and_mark_stage_3(self):
+        person_updates = []
+        stage_updates = []
+
+        def update_attio_person_contact_details(**kwargs):
+            person_updates.append(kwargs)
+            return kwargs["person_record_id"]
+
+        def update_attio_valuation_request_stage_3(**kwargs):
+            stage_updates.append(kwargs)
+            return kwargs["valuation_request_id"]
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_contact",
+            update_attio_person_contact_details=update_attio_person_contact_details,
+            update_attio_valuation_request_stage_3=update_attio_valuation_request_stage_3,
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_contact",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_contact",
+                },
+            )
+            contact_response = self.client.post(
+                "/api/crm/contact-details",
+                json={
+                    "attio_id": "person_contact",
+                    "email": "customer@example.com",
+                    "address_line_1": "1 Test Street",
+                    "postcode": "TS42QN",
+                    "attio_valuation_request_id": "vr_contact",
+                },
+            )
+
+        self.assertEqual(create_response.status_code, 201)
+        self.assertEqual(contact_response.status_code, 200)
+        self.assertEqual(person_updates[0]["email"], "customer@example.com")
+        self.assertEqual(person_updates[0]["address_line_1"], "1 Test Street")
+        self.assertEqual(person_updates[0]["postcode"], "TS42QN")
+        self.assertEqual(stage_updates[0]["valuation_request_id"], "vr_contact")
+
+        data = contact_response.get_json()
+        self.assertEqual(
+            data["updated_erp_valuations"][0]["status"],
+            "customer_details_received",
+        )
+        self.assertEqual(data["updated_erp_valuations"][0]["postcode"], "TS42QN")
+
+    def test_attio_person_contact_values_use_rootle_address_fields(self):
+        from attio import (
+            _person_contact_values,
+            _stage_1_values,
+            _valuation_request_values,
+            update_attio_valuation_request_stage_3,
+        )
+
+        values = _person_contact_values(
+            email="customer@example.com",
+            address_line_1="1 Test Street",
+            city="Middlesbrough",
+            postcode="TS42QN",
+            country="GB",
+        )
+
+        self.assertEqual(values["email_addresses"], ["customer@example.com"])
+        self.assertEqual(values["rootle_address_line_1"], "1 Test Street")
+        self.assertEqual(values["rootle_city"], "Middlesbrough")
+        self.assertEqual(values["rootle_postcode"], "TS42QN")
+        self.assertEqual(values["rootle_country"], "GB")
+        self.assertNotIn("primary_location", values)
+
+        self.assertEqual(
+            _stage_1_values(
+                name="Jane Smith",
+                phone_number="+447123456789",
+                posthog_distinct_id="ph_123",
+            )["rootle_stage"],
+            "phone_number_available",
+        )
+        self.assertEqual(
+            _valuation_request_values(
+                person_record_id="person_123",
+                rootle_request_id="request_123",
+                item_categories=["gold"],
+                item_photo_url="https://example.com/item.jpg",
+            )["rootle_stage"],
+            "item_details_available",
+        )
+
+        stage_payloads = []
+
+        class FakeResponse:
+            ok = True
+            status_code = 200
+            text = "{}"
+
+            def json(self):
+                return {"data": {"id": {"record_id": "vr_stage"}}}
+
+        def fake_patch(url, json, headers, timeout):
+            stage_payloads.append(json)
+            return FakeResponse()
+
+        with patch("attio.ensure_valuation_request_object", lambda: {}), patch(
+            "attio.requests.patch",
+            fake_patch,
+        ), patch("attio._headers", lambda: {}):
+            update_attio_valuation_request_stage_3(
+                valuation_request_id="vr_stage",
+                stage_3_completed_at=datetime.utcnow(),
+            )
+
+        self.assertEqual(
+            stage_payloads[0]["data"]["values"]["rootle_stage"],
+            "address_available",
+        )
+
+    def test_existing_stage_1_person_gets_descriptive_stage_label(self):
+        import attio
+
+        calls = []
+
+        with patch("attio.find_attio_person_by_phone", lambda phone_number: "person_existing"), patch(
+            "attio.update_attio_person_rootle_stage",
+            lambda **kwargs: calls.append(("stage", kwargs)),
+        ), patch(
+            "attio.update_attio_person_posthog_distinct_id",
+            lambda **kwargs: calls.append(("posthog", kwargs)),
+        ):
+            result = attio.get_or_create_attio_stage_1_lead(
+                name="Jane Smith",
+                phone_number="+447123456789",
+                posthog_distinct_id="ph_existing",
+            )
+
+        self.assertEqual(result, {"record_id": "person_existing", "created": False})
+        self.assertEqual(
+            calls[0],
+            (
+                "stage",
+                {
+                    "person_record_id": "person_existing",
+                    "rootle_stage": "phone_number_available",
+                },
+            ),
+        )
+        self.assertEqual(calls[1][0], "posthog")
 
     def test_add_valuation_item_syncs_attio_option(self):
         synced_options = []

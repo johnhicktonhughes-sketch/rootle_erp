@@ -32,8 +32,19 @@ ATTIO_VALUATION_REQUEST_OBJECT_SLUG = os.getenv(
     "ATTIO_VALUATION_REQUEST_OBJECT_SLUG",
     "valuation_requests",
 )
-ROOTLE_STAGE_OPTIONS = ("stage-1", "stage-2", "stage-3")
-VALUATION_REQUEST_STAGE_OPTIONS = ("stage-2", "stage-3", "closed")
+ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
+ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
+ROOTLE_STAGE_ADDRESS_AVAILABLE = "address_available"
+ROOTLE_STAGE_OPTIONS = (
+    ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+    ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE,
+    ROOTLE_STAGE_ADDRESS_AVAILABLE,
+)
+VALUATION_REQUEST_STAGE_OPTIONS = (
+    ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE,
+    ROOTLE_STAGE_ADDRESS_AVAILABLE,
+    "closed",
+)
 VALUATION_REQUEST_PRICING_STATUS_OPTIONS = ("pricing_pending", "mev_calculated")
 VALUATION_REQUEST_ITEM_OPTIONS = ("gold", "silver", "coins")
 VALUATION_REQUEST_ATTRIBUTES = (
@@ -260,6 +271,33 @@ MARKETING_ATTRIBUTION_ATTRIBUTES = (
         "description": "PostHog distinct_id captured on form submission.",
     },
 )
+ROOTLE_PERSON_CONTACT_ATTRIBUTES = (
+    {
+        "title": "Rootle Address Line 1",
+        "api_slug": "rootle_address_line_1",
+        "description": "Address line 1 captured in Rootle stage 3.",
+    },
+    {
+        "title": "Rootle Address Line 2",
+        "api_slug": "rootle_address_line_2",
+        "description": "Address line 2 captured in Rootle stage 3.",
+    },
+    {
+        "title": "Rootle City",
+        "api_slug": "rootle_city",
+        "description": "City captured in Rootle stage 3.",
+    },
+    {
+        "title": "Rootle Postcode",
+        "api_slug": "rootle_postcode",
+        "description": "Postcode captured in Rootle stage 3.",
+    },
+    {
+        "title": "Rootle Country",
+        "api_slug": "rootle_country",
+        "description": "Country captured in Rootle stage 3.",
+    },
+)
 MARKETING_META_TO_ATTIO = {
     "lead_source": "rootle_lead_source",
     "original_source": "rootle_original_source",
@@ -392,8 +430,8 @@ def _stage_1_values(
             }
         ],
         "phone_numbers": [{"original_phone_number": phone_number.strip()}],
-        "description": "Rootle website lead\nStage: stage-1",
-        ATTIO_STAGE_ATTRIBUTE_SLUG: "stage-1",
+        "description": f"Rootle website lead\nStage: {ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE}",
+        ATTIO_STAGE_ATTRIBUTE_SLUG: ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
         "rootle_posthog_distinct_id": posthog_distinct_id.strip(),
     }
 
@@ -414,7 +452,7 @@ def _valuation_request_values(
         "rootle_request_id": rootle_request_id,
         "item_categories": item_categories,
         "item_photo_url": item_photo_url,
-        "rootle_stage": "stage-2",
+        "rootle_stage": ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE,
         "pricing_status": "pricing_pending",
         "person": [
             {
@@ -453,18 +491,20 @@ def _person_contact_values(
     if email:
         values["email_addresses"] = [email]
 
-    address = {
-        "line_1": address_line_1,
-        "line_2": address_line_2,
-        "line_3": None,
-        "line_4": None,
-        "locality": city,
-        "region": None,
-        "postcode": postcode,
-        "country_code": country,
+    optional_values = {
+        "rootle_address_line_1": address_line_1,
+        "rootle_address_line_2": address_line_2,
+        "rootle_city": city,
+        "rootle_postcode": postcode,
+        "rootle_country": country,
     }
-    if any(address.values()):
-        values["primary_location"] = [address]
+    values.update(
+        {
+            key: str(value).strip()
+            for key, value in optional_values.items()
+            if value is not None and str(value).strip()
+        }
+    )
 
     return values
 
@@ -733,6 +773,22 @@ def ensure_marketing_attribution_attributes() -> list[dict]:
     return ensured
 
 
+def ensure_person_contact_attributes() -> list[dict]:
+    attributes = _list_attio_attributes()
+    existing_by_slug = {attribute.get("api_slug"): attribute for attribute in attributes}
+    ensured = []
+
+    for attribute in ROOTLE_PERSON_CONTACT_ATTRIBUTES:
+        existing = existing_by_slug.get(attribute["api_slug"])
+        if existing:
+            ensured.append(existing)
+            continue
+
+        ensured.append(_create_text_attribute(attribute))
+
+    return ensured
+
+
 def ensure_valuation_request_object() -> dict:
     valuation_request_object = _create_attio_object(
         ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
@@ -927,6 +983,10 @@ def get_or_create_attio_stage_1_lead(
 ) -> dict:
     existing_record_id = find_attio_person_by_phone(phone_number)
     if existing_record_id:
+        update_attio_person_rootle_stage(
+            person_record_id=existing_record_id,
+            rootle_stage=ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+        )
         update_attio_person_posthog_distinct_id(
             person_record_id=existing_record_id,
             posthog_distinct_id=posthog_distinct_id,
@@ -1105,6 +1165,43 @@ def update_attio_valuation_request_mev(
     return valuation_request_id
 
 
+def update_attio_valuation_request_stage_3(
+    *,
+    valuation_request_id: str | None,
+    stage_3_completed_at: datetime,
+) -> str | None:
+    if not valuation_request_id:
+        return valuation_request_id
+
+    ensure_valuation_request_object()
+    payload = {
+        "data": {
+            "values": {
+                "rootle_stage": ROOTLE_STAGE_ADDRESS_AVAILABLE,
+                "stage_3_completed_at": stage_3_completed_at.isoformat(),
+            }
+        }
+    }
+    response = requests.patch(
+        _attio_url(
+            f"objects/{ATTIO_VALUATION_REQUEST_OBJECT_SLUG}/records/{valuation_request_id}"
+        ),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="valuation_request_stage_3",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return valuation_request_id
+
+
 def update_attio_person_contact_details(
     *,
     person_record_id: str,
@@ -1115,6 +1212,7 @@ def update_attio_person_contact_details(
     postcode: str | None = None,
     country: str | None = None,
 ) -> str:
+    ensure_person_contact_attributes()
     values = _person_contact_values(
         email=email,
         address_line_1=address_line_1,
@@ -1135,6 +1233,37 @@ def update_attio_person_contact_details(
     )
     _record_attio_result(
         entity_type="person_contact_details",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return person_record_id
+
+
+def update_attio_person_rootle_stage(
+    *,
+    person_record_id: str,
+    rootle_stage: str,
+) -> str:
+    ensure_stage_attribute()
+    payload = {
+        "data": {
+            "values": {
+                ATTIO_STAGE_ATTRIBUTE_SLUG: rootle_stage,
+            }
+        }
+    }
+    response = requests.patch(
+        _attio_url(f"objects/{ATTIO_OBJECT_SLUG}/records/{person_record_id}"),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="person_rootle_stage",
         payload=payload,
         response=response,
     )

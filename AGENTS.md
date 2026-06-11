@@ -79,12 +79,14 @@ The current website form model is event-based rather than stage-order dependent.
   - Endpoint: `POST /api/crm/leads/stage-1`
   - Payload: `name`, `phone_number`, `posthog_distinct_id`
   - Finds or creates an Attio Person by phone number
+  - Sets Attio Person `rootle_stage` to `phone_number_available`
   - Does not create an ERP valuation case
 - Item submitted:
   - Endpoint: `POST /api/crm/valuation-requests`
   - Payload: Attio person id, item categories, item photo URL, optional PostHog id and valuation guide fields
   - Creates one Attio `valuation_requests` record
   - Creates one ERP `valuation_requests` case
+  - Sets Attio `valuation_requests.rootle_stage` to `item_details_available`
   - Stores valid submissions that fail Attio/ERP sync in `failed_valuation_request_submissions`
   - Failed submissions can be listed via `GET /api/crm/valuation-request-failures` and replayed via `POST /api/crm/valuation-request-failures/{id}/retry`
   - Supports one person having many valuation requests
@@ -99,8 +101,9 @@ The current website form model is event-based rather than stage-order dependent.
   - Payload: Attio person id, email, address fields
   - Updates the Attio Person record
   - Updates matching ERP valuation request cases when they exist
+  - Sets Attio `valuation_requests.rootle_stage` to `address_available`
 
-The UI labels may still say stage 1, stage 2, and stage 3, but the backend should not rely on those steps arriving in a fixed order.
+The UI labels may still say stage 1, stage 2, and stage 3, but Attio stores descriptive `rootle_stage` values: `phone_number_available`, `item_details_available`, and `address_available`.
 
 ## MEV and margin calculations
 

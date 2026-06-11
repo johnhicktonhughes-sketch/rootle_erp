@@ -31,6 +31,7 @@ LABEL_MEV_THRESHOLD = Decimal("100.00")
 WHITE_GLOVE_MEV_THRESHOLD = Decimal("10000.00")
 LABEL_TERMINAL_STATUSES = {"cancelled", "expired", "received"}
 RESET_CONFIRMATION = "DELETE ROOTLE ERP DATA"
+ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
 
 
 def _required_string(payload, key):
@@ -650,7 +651,7 @@ def submit_stage_1_crm_lead():
             "crm_system": "attio",
             "attio_id": crm_result["record_id"],
             "crm_record_id": crm_result["record_id"],
-            "stage": "stage-1",
+            "stage": ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
             "erp_lead_created": False,
             "attio_record_created": crm_result["created"],
         }
@@ -1449,6 +1450,18 @@ def submit_contact_details():
         valuation.stage_3_completed_at = now
         valuation.current_stage = "contact_details_received"
         valuation.status = "customer_details_received"
+
+    try:
+        from attio import update_attio_valuation_request_stage_3
+
+        for valuation in valuations:
+            update_attio_valuation_request_stage_3(
+                valuation_request_id=valuation.crm_valuation_request_id,
+                stage_3_completed_at=now,
+            )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
     db.session.commit()
 

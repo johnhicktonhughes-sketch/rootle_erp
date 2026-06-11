@@ -78,7 +78,7 @@ The response includes the Attio record id and confirms that no ERP lead was crea
   "crm_system": "attio",
   "attio_id": "record-id",
   "crm_record_id": "record-id",
-  "stage": "stage-1",
+  "stage": "phone_number_available",
   "erp_lead_created": false,
   "attio_record_created": false
 }
@@ -216,7 +216,8 @@ currency, margin, and calculation timestamp are also stored on `valuation_reques
 and mirrored to the linked Attio `valuation_requests` record. MEV calculation
 also changes `pricing_status` from `pricing_pending` to `mev_calculated`; it does
 not change `rootle_stage`, which remains the customer data completeness signal
-(`stage-2` without address details, `stage-3` with address details).
+(`item_details_available` without address details, `address_available` with
+address details).
 
 Pricing workers can list ERP valuation cases that are waiting for an MEV:
 

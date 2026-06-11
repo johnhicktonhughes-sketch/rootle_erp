@@ -338,7 +338,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-request-failures": {
             "get": {
                 "summary": "List failed valuation request submissions",
-                "description": "Lists stage-2 valuation request submissions that failed during ERP or Attio processing and can be retried.",
+                "description": "Lists item-detail valuation request submissions that failed during ERP or Attio processing and can be retried.",
                 "parameters": [
                     {
                         "name": "status",
@@ -380,7 +380,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-request-failures/{submission_id}": {
             "get": {
                 "summary": "Get a failed valuation request submission",
-                "description": "Returns the stored failed stage-2 payload, normalized replay payload, and latest failure status.",
+                "description": "Returns the stored failed item-detail payload, normalized replay payload, and latest failure status.",
                 "parameters": [
                     {
                         "name": "submission_id",
@@ -398,7 +398,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-request-failures/{submission_id}/retry": {
             "post": {
                 "summary": "Retry a failed valuation request submission",
-                "description": "Replays a stored stage-2 submission into Attio and creates the ERP valuation request when the sync succeeds.",
+                "description": "Replays a stored item-detail submission into Attio and creates the ERP valuation request when the sync succeeds.",
                 "parameters": [
                     {
                         "name": "submission_id",
@@ -961,14 +961,14 @@ DOCS_HTML = """<!doctype html>
         <span class="method get">GET</span>
         <div>
           <h3><code>/api/crm/valuation-request-failures</code></h3>
-          <p class="meta">List failed stage-2 payloads stored for investigation and replay. Filter with <code>status</code>, person id, or Rootle request id.</p>
+          <p class="meta">List failed item-detail payloads stored for investigation and replay. Filter with <code>status</code>, person id, or Rootle request id.</p>
         </div>
       </article>
       <article class="endpoint">
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-request-failures/{submission_id}/retry</code></h3>
-          <p class="meta">Replay a stored stage-2 submission into Attio and create the ERP valuation request when sync succeeds.</p>
+          <p class="meta">Replay a stored item-detail submission into Attio and create the ERP valuation request when sync succeeds.</p>
         </div>
       </article>
       <article class="endpoint">
