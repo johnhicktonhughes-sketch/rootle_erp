@@ -22,6 +22,7 @@ class TestConfig:
     CORS_ALLOWED_ORIGINS = []
     ATTIO_WEBHOOK_SECRET = "test-secret"
     ATTIO_VALUATION_REQUEST_OBJECT_ID = None
+    ROOTLE_RESET_TOKEN = "test-reset-token"
 
 
 class ValuationRequestTests(unittest.TestCase):
@@ -492,6 +493,78 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertTrue(label_data["white_glove_required"])
         self.assertEqual(label_data["dispatch_method"], "white_glove")
         self.assertEqual(label_data["courier"], "rootle_white_glove")
+
+    def test_reset_data_requires_token_and_confirmation(self):
+        from models import Company
+
+        company = Company(name="Rootle Test")
+        db.session.add(company)
+        db.session.commit()
+
+        missing_token_response = self.client.post(
+            "/api/admin/reset-data",
+            json={"confirmation": "DELETE ROOTLE ERP DATA"},
+        )
+        bad_confirmation_response = self.client.post(
+            "/api/admin/reset-data",
+            json={"confirmation": "delete it", "reset_token": "test-reset-token"},
+        )
+
+        self.assertEqual(missing_token_response.status_code, 401)
+        self.assertEqual(bad_confirmation_response.status_code, 400)
+        self.assertEqual(Company.query.count(), 1)
+
+    def test_reset_data_deletes_attio_and_truncates_database(self):
+        from models import Company, LeadValuation, ValuationItemCategory
+
+        attio_calls = []
+
+        def delete_all_attio_records():
+            attio_calls.append(True)
+            return {
+                "deleted_record_count": 3,
+                "objects": {
+                    "valuation_requests": {"deleted_record_count": 2},
+                    "people": {"deleted_record_count": 1},
+                },
+            }
+
+        attio = types.SimpleNamespace(delete_all_attio_records=delete_all_attio_records)
+
+        db.session.add(Company(name="Rootle Test"))
+        db.session.add(
+            ValuationItemCategory(
+                name="watches",
+                label="Watches",
+                sort_order=10,
+            )
+        )
+        db.session.add(
+            LeadValuation(
+                crm_person_record_id="person_reset",
+                crm_valuation_request_id="vr_reset",
+                rootle_request_id="request_reset",
+                item_categories=["gold"],
+                item_photo_url="https://example.com/item.jpg",
+            )
+        )
+        db.session.commit()
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            response = self.client.post(
+                "/api/admin/reset-data",
+                json={"confirmation": "DELETE ROOTLE ERP DATA"},
+                headers={"X-Reset-Token": "test-reset-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["reset"])
+        self.assertEqual(data["attio"]["deleted_record_count"], 3)
+        self.assertEqual(len(attio_calls), 1)
+        self.assertEqual(Company.query.count(), 0)
+        self.assertEqual(LeadValuation.query.count(), 0)
+        self.assertEqual(ValuationItemCategory.query.count(), 0)
 
 
 if __name__ == "__main__":

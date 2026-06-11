@@ -561,6 +561,69 @@ def check_attio_connection() -> dict:
     return response.json()
 
 
+def _query_attio_records(object_slug: str, *, limit: int = 100) -> list[dict]:
+    response = _attio_request(
+        "POST",
+        f"objects/{object_slug}/records/query",
+        json={"limit": limit},
+    )
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+    return response.json().get("data", [])
+
+
+def _delete_attio_record(object_slug: str, record_id: str) -> bool:
+    response = _attio_request("DELETE", f"objects/{object_slug}/records/{record_id}")
+    if response.status_code == 404:
+        return False
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+    return True
+
+
+def delete_all_attio_records(
+    object_slugs: tuple[str, ...] | None = None,
+    *,
+    max_passes: int = 1000,
+) -> dict:
+    """Delete all records from the Rootle-owned Attio objects."""
+    object_slugs = object_slugs or (
+        ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
+        ATTIO_OBJECT_SLUG,
+    )
+    summary = {
+        "objects": {},
+        "deleted_record_count": 0,
+    }
+
+    for object_slug in object_slugs:
+        deleted_count = 0
+        passes = 0
+
+        while passes < max_passes:
+            passes += 1
+            records = _query_attio_records(object_slug)
+            if not records:
+                break
+
+            for record in records:
+                record_id = _extract_record_id_from_record(record)
+                if record_id and _delete_attio_record(object_slug, record_id):
+                    deleted_count += 1
+
+        if passes >= max_passes:
+            raise AttioError(
+                f"Stopped deleting Attio {object_slug} records after {max_passes} passes."
+            )
+
+        summary["objects"][object_slug] = {
+            "deleted_record_count": deleted_count,
+        }
+        summary["deleted_record_count"] += deleted_count
+
+    return summary
+
+
 def find_attio_person_by_phone(phone_number: str) -> str | None:
     response = _attio_request(
         "POST",

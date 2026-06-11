@@ -50,6 +50,7 @@ The API will start on `http://127.0.0.1:5000`.
 - `GET /api/crm/valuation-requests/<id>`
 - `POST /api/crm/contact-details`
 - `POST /api/webhooks/attio`
+- `POST /api/admin/reset-data`
 
 ### Website form stage 1
 
@@ -260,3 +261,26 @@ POST /api/crm/inbound-labels/scan/{barcode_value}
 MEV above 10000.00 GBP defaults to a `white_glove` dispatch method with
 `white_glove_required=true`. Courier and service values can be overridden in the
 label creation payload while the policy layer is still simple.
+
+### Admin data reset
+
+The ERP includes a destructive admin endpoint for clearing Rootle data from Attio
+and truncating the application database tables. It is disabled unless
+`ROOTLE_RESET_TOKEN` is set. In production, calls also need the usual API key.
+
+```http
+POST /api/admin/reset-data
+X-API-Key: <ROOTLE_API_KEY>
+X-Reset-Token: <ROOTLE_RESET_TOKEN>
+```
+
+```json
+{
+  "confirmation": "DELETE ROOTLE ERP DATA"
+}
+```
+
+By default the endpoint deletes records from Attio `valuation_requests` and
+`people`, then truncates the ERP application tables with identity reset and
+cascade. Alembic migration state is not part of the SQLAlchemy app metadata and
+is preserved. For a local database-only reset, pass `"skip_attio": true`.

@@ -6,6 +6,7 @@ import re
 from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request
+from sqlalchemy import text
 
 from database import db
 from models import (
@@ -28,6 +29,7 @@ DEFAULT_VALUATION_ITEMS = ("gold", "silver", "coins")
 LABEL_MEV_THRESHOLD = Decimal("100.00")
 WHITE_GLOVE_MEV_THRESHOLD = Decimal("10000.00")
 LABEL_TERMINAL_STATUSES = {"cancelled", "expired", "received"}
+RESET_CONFIRMATION = "DELETE ROOTLE ERP DATA"
 
 
 def _required_string(payload, key):
@@ -133,6 +135,51 @@ def _bool_value(payload, key):
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _reset_token_is_valid(payload):
+    expected_token = current_app.config.get("ROOTLE_RESET_TOKEN")
+    if not expected_token:
+        return False
+
+    provided_token = (
+        request.headers.get("X-Reset-Token")
+        or request.headers.get("X-Rootle-Reset-Token")
+        or _required_string(payload, "reset_token")
+        or ""
+    ).strip()
+    return bool(provided_token) and hmac.compare_digest(provided_token, expected_token)
+
+
+def _truncate_application_tables():
+    tables = list(reversed(db.metadata.sorted_tables))
+    table_names = [table.name for table in tables]
+    dialect_name = db.engine.dialect.name
+
+    if dialect_name == "postgresql":
+        preparer = db.engine.dialect.identifier_preparer
+        quoted_table_names = [
+            (
+                f"{preparer.quote_schema(table.schema)}.{preparer.quote(table.name)}"
+                if table.schema
+                else preparer.quote(table.name)
+            )
+            for table in tables
+        ]
+        if quoted_table_names:
+            db.session.execute(
+                text(
+                    "TRUNCATE TABLE "
+                    + ", ".join(quoted_table_names)
+                    + " RESTART IDENTITY CASCADE"
+                )
+            )
+    else:
+        for table in tables:
+            db.session.execute(table.delete())
+
+    db.session.commit()
+    return table_names
 
 
 def _active_label_for_valuation(valuation):
@@ -389,6 +436,56 @@ def handle_attio_webhook():
             "deleted_erp_valuations": deleted_valuations,
             "deleted_erp_valuation_count": len(deleted_valuations),
             "ignored_event_count": ignored_events,
+        }
+    )
+
+
+@crm_bp.route("/admin/reset-data", methods=["POST"])
+def reset_all_data():
+    payload = request.get_json(silent=True) or {}
+    if not _reset_token_is_valid(payload):
+        return (
+            jsonify(
+                {
+                    "error": "reset_unauthorized",
+                    "message": "A valid reset token is required.",
+                }
+            ),
+            401,
+        )
+
+    if _required_string(payload, "confirmation") != RESET_CONFIRMATION:
+        return (
+            jsonify(
+                {
+                    "error": "confirmation_required",
+                    "confirmation": RESET_CONFIRMATION,
+                }
+            ),
+            400,
+        )
+
+    include_attio = not _bool_value(payload, "skip_attio")
+    attio_result = None
+    if include_attio:
+        try:
+            from attio import delete_all_attio_records
+
+            attio_result = delete_all_attio_records()
+        except Exception as exc:
+            return jsonify({"error": "attio_reset_failed", "message": str(exc)}), 502
+
+    truncated_tables = _truncate_application_tables()
+
+    return jsonify(
+        {
+            "reset": True,
+            "attio_deleted": include_attio,
+            "attio": attio_result,
+            "database": {
+                "truncated_table_count": len(truncated_tables),
+                "truncated_tables": truncated_tables,
+            },
         }
     )
 
