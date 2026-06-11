@@ -154,7 +154,7 @@ class LeadEstimate(db.Model, TimestampMixin):
 
 
 class LeadValuation(db.Model, TimestampMixin):
-    __tablename__ = "lead_valuations"
+    __tablename__ = "valuation_requests"
 
     id = db.Column(db.Integer, primary_key=True)
     crm_system = db.Column(db.String(64), default="attio", nullable=False)
@@ -205,7 +205,7 @@ class LeadValuationMevCalculation(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     lead_valuation_id = db.Column(
         db.Integer,
-        db.ForeignKey("lead_valuations.id"),
+        db.ForeignKey("valuation_requests.id"),
         nullable=False,
         index=True,
     )
@@ -229,7 +229,7 @@ class InboundLabel(db.Model, TimestampMixin):
     rootle_label_id = db.Column(db.String(128), unique=True, nullable=False)
     lead_valuation_id = db.Column(
         db.Integer,
-        db.ForeignKey("lead_valuations.id"),
+        db.ForeignKey("valuation_requests.id"),
         nullable=False,
         index=True,
     )

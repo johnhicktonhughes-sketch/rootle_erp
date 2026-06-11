@@ -31,7 +31,7 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
 
 - Company / Contact
 - Lead / LeadBoxDetail / LeadBoxRevision / LeadEstimate
-- LeadValuation
+- Valuation request (`valuation_requests`)
 - Opportunity
 - JourneyPhase and OperationalDecision
 - Product / Quote / QuoteItem
@@ -44,7 +44,7 @@ The long-term goal is a Python Flask API that powers the ERP and integrates with
 
 - PostgreSQL is now the target database for the ERP
 - Configuration expects `DATABASE_URL` for the Postgres connection
-- Latest Alembic head is `c4d5e6f7a8b9`
+- Latest Alembic head is `f7a8b9c0d1e2`
 
 ## Attio integration
 
@@ -83,7 +83,7 @@ The current website form model is event-based rather than stage-order dependent.
   - Endpoint: `POST /api/crm/valuation-requests`
   - Payload: Attio person id, item categories, item photo URL, optional PostHog id and valuation guide fields
   - Creates one Attio `valuation_requests` record
-  - Creates one ERP `LeadValuation` case
+  - Creates one ERP `valuation_requests` case
   - Supports one person having many valuation requests
   - Dedupes by `rootle_request_id`
 - Valuation request queried:
@@ -95,19 +95,19 @@ The current website form model is event-based rather than stage-order dependent.
   - Endpoint: `POST /api/crm/contact-details`
   - Payload: Attio person id, email, address fields
   - Updates the Attio Person record
-  - Updates matching ERP `LeadValuation` cases when they exist
+  - Updates matching ERP valuation request cases when they exist
 
 The UI labels may still say stage 1, stage 2, and stage 3, but the backend should not rely on those steps arriving in a fixed order.
 
 ## MEV and margin calculations
 
-When a `LeadValuation` is ready for pricing, the ERP can store a minimum expected valuation (MEV) and anticipated margin.
+When a valuation request is ready for pricing, the ERP can store a minimum expected valuation (MEV) and anticipated margin.
 
 - Endpoint: `POST /api/crm/valuation-requests/{valuation_id}/mev-calculations`
 - Required payload fields: `amount`, `currency`, `margin`
 - Optional payload fields: `calculation_method`, `calculated_by`, `notes`, `inputs`, `metadata`
 - Every calculation appends an audit row to `lead_valuation_mev_calculations`
-- `lead_valuations` also stores the latest snapshot in:
+- `valuation_requests` also stores the latest snapshot in:
   - `latest_mev_amount`
   - `latest_mev_currency`
   - `latest_mev_margin`
@@ -124,6 +124,6 @@ When a `LeadValuation` is ready for pricing, the ERP can store a minimum expecte
 - Refine the customer journey and decision model from your sketch
 - Add pricing agent and quote automation support
 - Build Slack event ingestion and messaging integration
-- Connect valuation guide generation to `LeadValuation`
+- Connect valuation guide generation to valuation requests
 - Add live Stage 2/valuation request tests against Attio or a mocked integration layer
 - Expand API coverage, validation, and authentication

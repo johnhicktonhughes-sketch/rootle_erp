@@ -137,7 +137,7 @@ Aliases are accepted:
 - `item_photo_url`, `picture_url`, or `photo_url`
 - `attio_id`, `crm_person_record_id`, or `crm_record_id`
 
-Each item submission creates its own ERP `lead_valuations` record and its own Attio
+Each item submission creates its own ERP `valuation_requests` record and its own Attio
 `valuation_requests` record. Reusing the same `rootle_request_id` merges any newly
 submitted item categories into the existing ERP valuation instead of creating a
 duplicate.
@@ -151,8 +151,8 @@ POST /api/webhooks/attio
 ```
 
 Set `ATTIO_WEBHOOK_SECRET` in `.env` to the webhook secret from Attio. When a
-deleted Attio record id matches `lead_valuations.crm_valuation_request_id`, the
-ERP deletes the matching `lead_valuations` row. Optionally set
+deleted Attio record id matches `valuation_requests.crm_valuation_request_id`, the
+ERP deletes the matching `valuation_requests` row. Optionally set
 `ATTIO_VALUATION_REQUEST_OBJECT_ID` to the Attio object id for
 `valuation_requests` so unrelated Attio record deletes are ignored before the
 database lookup.
@@ -179,7 +179,7 @@ POST /api/crm/contact-details
 
 ### MEV calculations
 
-After an item submission creates a `lead_valuations` row, pricing can store an MEV
+After an item submission creates a `valuation_requests` row, pricing can store an MEV
 calculation against that valuation:
 
 ```http
@@ -200,7 +200,7 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 ```
 
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
-currency, margin, and calculation timestamp are also stored on `lead_valuations`
+currency, margin, and calculation timestamp are also stored on `valuation_requests`
 and mirrored to the linked Attio `valuation_requests` record. MEV calculation
 also changes `pricing_status` from `pricing_pending` to `mev_calculated`; it does
 not change `rootle_stage`, which remains the customer data completeness signal

@@ -227,7 +227,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests": {
             "get": {
                 "summary": "List valuation requests",
-                "description": "Lists ERP LeadValuation cases for pricing queues and operations. Use needs_mev=true to find cases without a latest MEV snapshot.",
+                "description": "Lists ERP valuation request cases for pricing queues and operations. Use needs_mev=true to find cases without a latest MEV snapshot.",
                 "parameters": [
                     {
                         "name": "status",
@@ -291,7 +291,7 @@ OPENAPI_SPEC = {
             },
             "post": {
                 "summary": "Create a valuation request",
-                "description": "Creates one ERP LeadValuation and one linked Attio valuation_requests record. Valid item values come from GET /api/crm/valuation-items.",
+                "description": "Creates one ERP valuation request and one linked Attio valuation_requests record. Valid item values come from GET /api/crm/valuation-items.",
                 "requestBody": {
                     "required": True,
                     "content": {
@@ -596,7 +596,7 @@ OPENAPI_SPEC = {
         "/api/webhooks/attio": {
             "post": {
                 "summary": "Receive Attio webhook events",
-                "description": "Deletes matching ERP LeadValuation rows when Attio sends record.deleted events for valuation_requests records.",
+                "description": "Deletes matching ERP valuation request rows when Attio sends record.deleted events for valuation_requests records.",
                 "security": [],
                 "parameters": [
                     {
@@ -850,7 +850,7 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-requests</code></h3>
-          <p class="meta">Create a linked Attio valuation request and ERP LeadValuation. Valid items come from <code>/api/crm/valuation-items</code>.</p>
+          <p class="meta">Create a linked Attio valuation request and ERP valuation request. Valid items come from <code>/api/crm/valuation-items</code>.</p>
           <pre>{
   "attio_id": "person-record-id",
   "items": ["gold", "coins"],
