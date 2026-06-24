@@ -6,6 +6,7 @@ import re
 from uuid import uuid4
 
 from flask import Blueprint, current_app, jsonify, request
+import requests
 from sqlalchemy import text
 
 from database import db
@@ -32,6 +33,8 @@ WHITE_GLOVE_MEV_THRESHOLD = Decimal("10000.00")
 LABEL_TERMINAL_STATUSES = {"cancelled", "expired", "received"}
 RESET_CONFIRMATION = "DELETE ROOTLE ERP DATA"
 ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
+REQUESTED_MEV_CALCULATION_STATUS = "requested_mev_calculation"
+PRICING_API_CALCULATION_METHOD = "rootle_pricing_api"
 
 
 def _required_string(payload, key):
@@ -124,6 +127,53 @@ def _mev_calculation_to_dict(calculation):
     return calculation.to_dict()
 
 
+def _nested_value(data, path):
+    current = data
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _first_payload_value(payload, *keys, nested_paths=None):
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and value != "":
+            return value
+
+    for path in nested_paths or []:
+        value = _nested_value(payload, path)
+        if value is not None and value != "":
+            return value
+
+    return None
+
+
+def _pricing_decimal_value(payload, *keys, nested_paths=None):
+    value = _first_payload_value(payload, *keys, nested_paths=nested_paths)
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _pricing_request_id_value(payload):
+    value = _first_payload_value(payload, "pricing_request_id", "pricing_result_id")
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
+def _default_margin():
+    try:
+        return Decimal(str(current_app.config.get("PRICING_DEFAULT_MARGIN", "0")))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValueError("PRICING_DEFAULT_MARGIN must be a decimal value.")
+
+
 def _label_to_dict(label, include_context=False):
     data = label.to_dict()
     if include_context:
@@ -177,6 +227,162 @@ def _bool_value(payload, key):
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
+def _first_string(payload, *keys):
+    for key in keys:
+        value = _required_string(payload, key)
+        if value:
+            return value
+    return None
+
+
+def _attio_record_id_from_payload(payload):
+    record_id = _first_string(
+        payload,
+        "crm_valuation_request_id",
+        "attio_valuation_request_id",
+        "record_id",
+    )
+    if record_id:
+        return record_id
+
+    event_id = payload.get("id")
+    if isinstance(event_id, dict):
+        record_id = _required_string(event_id, "record_id")
+        if record_id:
+            return record_id
+
+    record = payload.get("record")
+    if isinstance(record, dict):
+        record_id = _first_string(record, "record_id", "id")
+        if record_id:
+            return record_id
+
+        record_id = record.get("id")
+        if isinstance(record_id, dict):
+            return _required_string(record_id, "record_id")
+
+    return None
+
+
+def _pricing_api_url(path):
+    base_url = current_app.config.get("PRICING_API_BASE_URL", "").rstrip("/")
+    if not base_url:
+        return None
+    return f"{base_url}/{path.lstrip('/')}"
+
+
+def _pricing_api_headers():
+    headers = {"Content-Type": "application/json"}
+    api_key = current_app.config.get("PRICING_API_KEY")
+    if api_key:
+        headers["X-API-Key"] = str(api_key)
+    return headers
+
+
+def _pricing_prediction_payload(payload, valuation):
+    max_value = _decimal_value(payload, "max_value")
+    prediction_payload = {
+        "valuation_request_id": (
+            _first_string(payload, "pricing_valuation_request_id")
+            or valuation.crm_valuation_request_id
+            or valuation.rootle_request_id
+        ),
+        "max_category": _required_string(payload, "max_category"),
+        "max_value": float(max_value) if max_value is not None else None,
+    }
+
+    other_categories = _string_list(payload, "other_categories", "supporting_categories")
+    if other_categories is not None:
+        prediction_payload["other_categories"] = other_categories
+
+    declared_features = payload.get("declared_features")
+    if isinstance(declared_features, dict):
+        prediction_payload["declared_features"] = declared_features
+
+    return prediction_payload
+
+
+def _call_pricing_predict(prediction_payload):
+    url = _pricing_api_url("/predict")
+    if not url:
+        raise RuntimeError("PRICING_API_BASE_URL is not configured.")
+
+    request_payload = dict(prediction_payload)
+    if isinstance(request_payload.get("max_value"), Decimal):
+        request_payload["max_value"] = float(request_payload["max_value"])
+
+    response = requests.post(
+        url,
+        json=request_payload,
+        headers=_pricing_api_headers(),
+        timeout=30,
+    )
+    if not response.ok:
+        raise RuntimeError(f"Pricing API returned {response.status_code}: {response.text}")
+
+    return response.json()
+
+
+def _store_mev_calculation(
+    *,
+    valuation,
+    amount,
+    currency,
+    margin,
+    calculation_method=None,
+    calculated_by=None,
+    notes=None,
+    inputs=None,
+    metadata=None,
+    mev_low=None,
+    mev_high=None,
+    pricing_request_id=None,
+):
+    calculated_at = datetime.utcnow()
+    calculation = LeadValuationMevCalculation(
+        valuation=valuation,
+        amount=amount,
+        currency=currency,
+        margin=margin,
+        mev_low=mev_low,
+        mev_high=mev_high,
+        pricing_request_id=pricing_request_id,
+        calculation_method=calculation_method,
+        calculated_by=calculated_by,
+        calculated_at=calculated_at,
+        notes=notes,
+        inputs=inputs,
+        meta=metadata,
+    )
+    valuation.latest_mev_amount = amount
+    valuation.latest_mev_currency = currency
+    valuation.latest_mev_margin = margin
+    valuation.latest_mev_calculated_at = calculated_at
+    valuation.mev_low = mev_low
+    valuation.mev_high = mev_high
+    valuation.pricing_request_id = pricing_request_id
+    valuation.pricing_status = "mev_calculated"
+    valuation.status = "mev_calculated"
+
+    db.session.add(calculation)
+    db.session.flush()
+
+    from attio import update_attio_valuation_request_mev
+
+    update_attio_valuation_request_mev(
+        valuation_request_id=valuation.crm_valuation_request_id,
+        amount=amount,
+        currency=currency,
+        margin=margin,
+        calculated_at=calculated_at,
+        mev_low=mev_low,
+        mev_high=mev_high,
+        pricing_request_id=pricing_request_id,
+        pricing_status=valuation.pricing_status,
+    )
+    return calculation
 
 
 def _reset_token_is_valid(payload):
@@ -1117,24 +1323,186 @@ def get_valuation_request(valuation_id):
     return jsonify({"valuation": _valuation_to_dict(valuation)})
 
 
+@crm_bp.route("/crm/valuation-requests/request-mev-calculation", methods=["POST"])
+def request_valuation_mev_calculation():
+    payload = request.get_json() or {}
+    pricing_status = _required_string(payload, "pricing_status")
+    if pricing_status and pricing_status != REQUESTED_MEV_CALCULATION_STATUS:
+        return (
+            jsonify(
+                {
+                    "ignored": True,
+                    "reason": "pricing_status_not_requested_mev_calculation",
+                    "pricing_status": pricing_status,
+                }
+            ),
+            200,
+        )
+
+    crm_valuation_request_id = _attio_record_id_from_payload(payload)
+    rootle_request_id = _required_string(payload, "rootle_request_id")
+    valuation = None
+    if crm_valuation_request_id:
+        valuation = LeadValuation.query.filter_by(
+            crm_valuation_request_id=crm_valuation_request_id,
+        ).first()
+    if not valuation and rootle_request_id:
+        valuation = LeadValuation.query.filter_by(
+            rootle_request_id=rootle_request_id,
+        ).first()
+
+    if not valuation:
+        return (
+            jsonify(
+                {
+                    "error": "valuation_request_not_found",
+                    "crm_valuation_request_id": crm_valuation_request_id,
+                    "rootle_request_id": rootle_request_id,
+                }
+            ),
+            404,
+        )
+
+    prediction_payload = _pricing_prediction_payload(payload, valuation)
+    missing_fields = [
+        field
+        for field, value in (
+            ("valuation_request_id", prediction_payload.get("valuation_request_id")),
+            ("max_category", prediction_payload.get("max_category")),
+            ("max_value", prediction_payload.get("max_value")),
+        )
+        if value is None or value == ""
+    ]
+    if missing_fields:
+        return jsonify({"error": "missing_required_fields", "fields": missing_fields}), 400
+
+    if prediction_payload["max_value"] < 0:
+        return jsonify({"error": "invalid_max_value", "message": "max_value must be zero or greater"}), 400
+
+    margin = _decimal_value(payload, "margin")
+    if margin is None:
+        try:
+            margin = _default_margin()
+        except ValueError as exc:
+            return jsonify({"error": "invalid_default_margin", "message": str(exc)}), 500
+    if margin < 0:
+        return jsonify({"error": "invalid_margin", "message": "margin must be zero or greater"}), 400
+
+    currency = (_required_string(payload, "currency") or "GBP").upper()
+    if len(currency) != 3 or not currency.isalpha():
+        return jsonify({"error": "invalid_currency", "message": "currency must be a 3-letter ISO code"}), 400
+
+    try:
+        prediction = _call_pricing_predict(prediction_payload)
+        amount = Decimal(str(prediction["ensemble_total_prediction"]))
+    except KeyError:
+        return (
+            jsonify(
+                {
+                    "error": "pricing_prediction_missing_amount",
+                    "message": "Pricing API response did not include ensemble_total_prediction.",
+                }
+            ),
+            502,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": "pricing_prediction_failed", "message": str(exc)}), 502
+
+    mev_low = _pricing_decimal_value(
+        prediction,
+        "mev_low",
+        "low_total_prediction",
+        nested_paths=[
+            ("range", "total", "low"),
+            ("prediction_interval", "low_total_prediction"),
+        ],
+    )
+    mev_high = _pricing_decimal_value(
+        prediction,
+        "mev_high",
+        "high_total_prediction",
+        nested_paths=[
+            ("range", "total", "high"),
+            ("prediction_interval", "high_total_prediction"),
+        ],
+    )
+    pricing_request_id = _pricing_request_id_value(prediction)
+
+    try:
+        calculation = _store_mev_calculation(
+            valuation=valuation,
+            amount=amount,
+            currency=currency,
+            margin=margin,
+            mev_low=mev_low,
+            mev_high=mev_high,
+            pricing_request_id=pricing_request_id,
+            calculation_method=PRICING_API_CALCULATION_METHOD,
+            calculated_by=_required_string(payload, "calculated_by") or "attio-workflow",
+            notes=_required_string(payload, "notes"),
+            inputs={"pricing_request": prediction_payload},
+            metadata={"pricing_response": prediction},
+        )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "valuation": _valuation_to_dict(valuation),
+                "mev_calculation": _mev_calculation_to_dict(calculation),
+                "pricing_prediction": prediction,
+            }
+        ),
+        201,
+    )
+
+
 @crm_bp.route("/crm/valuation-requests/<int:valuation_id>/mev-calculations", methods=["POST"])
 def add_valuation_mev_calculation(valuation_id):
     valuation = LeadValuation.query.get_or_404(valuation_id)
     payload = request.get_json() or {}
-    amount = _decimal_value(payload, "amount")
-    currency = (_required_string(payload, "currency") or "").upper()
+    amount = _pricing_decimal_value(payload, "amount", "mev_amount", "ensemble_total_prediction")
+    currency = (_required_string(payload, "currency") or "GBP").upper()
     margin = _decimal_value(payload, "margin")
+    if margin is None:
+        try:
+            margin = _default_margin()
+        except ValueError as exc:
+            return jsonify({"error": "invalid_default_margin", "message": str(exc)}), 500
+    mev_low = _pricing_decimal_value(
+        payload,
+        "mev_low",
+        "low_total_prediction",
+        nested_paths=[
+            ("range", "total", "low"),
+            ("prediction_interval", "low_total_prediction"),
+        ],
+    )
+    mev_high = _pricing_decimal_value(
+        payload,
+        "mev_high",
+        "high_total_prediction",
+        nested_paths=[
+            ("range", "total", "high"),
+            ("prediction_interval", "high_total_prediction"),
+        ],
+    )
+    pricing_request_id = _pricing_request_id_value(payload)
     calculation_method = _required_string(payload, "calculation_method")
     calculated_by = _required_string(payload, "calculated_by")
     notes = _required_string(payload, "notes")
-    calculated_at = datetime.utcnow()
 
     missing_fields = [
         field
         for field, value in (
             ("amount", amount),
-            ("currency", currency),
-            ("margin", margin),
+            ("mev_low", mev_low),
+            ("mev_high", mev_high),
         )
         if value is None or value == ""
     ]
@@ -1150,38 +1518,29 @@ def add_valuation_mev_calculation(valuation_id):
     if margin < 0:
         return jsonify({"error": "invalid_margin", "message": "margin must be zero or greater"}), 400
 
-    calculation = LeadValuationMevCalculation(
-        valuation=valuation,
-        amount=amount,
-        currency=currency,
-        margin=margin,
-        calculation_method=calculation_method,
-        calculated_by=calculated_by,
-        calculated_at=calculated_at,
-        notes=notes,
-        inputs=payload.get("inputs"),
-        meta=payload.get("metadata"),
-    )
-    valuation.latest_mev_amount = amount
-    valuation.latest_mev_currency = currency
-    valuation.latest_mev_margin = margin
-    valuation.latest_mev_calculated_at = calculated_at
-    valuation.pricing_status = "mev_calculated"
-    valuation.status = "mev_calculated"
+    if mev_low is not None and mev_low < 0:
+        return jsonify({"error": "invalid_mev_low", "message": "mev_low must be zero or greater"}), 400
 
-    db.session.add(calculation)
-    db.session.flush()
+    if mev_high is not None and mev_high < 0:
+        return jsonify({"error": "invalid_mev_high", "message": "mev_high must be zero or greater"}), 400
+
+    if mev_low is not None and mev_high is not None and mev_low > mev_high:
+        return jsonify({"error": "invalid_mev_range", "message": "mev_low must be less than or equal to mev_high"}), 400
 
     try:
-        from attio import update_attio_valuation_request_mev
-
-        update_attio_valuation_request_mev(
-            valuation_request_id=valuation.crm_valuation_request_id,
+        calculation = _store_mev_calculation(
+            valuation=valuation,
             amount=amount,
             currency=currency,
             margin=margin,
-            calculated_at=calculated_at,
-            pricing_status=valuation.pricing_status,
+            mev_low=mev_low,
+            mev_high=mev_high,
+            pricing_request_id=pricing_request_id,
+            calculation_method=calculation_method,
+            calculated_by=calculated_by,
+            notes=notes,
+            inputs=payload.get("inputs"),
+            metadata=payload.get("metadata"),
         )
     except Exception as exc:
         db.session.rollback()
@@ -1237,6 +1596,9 @@ def sync_valuation_mev_to_attio(valuation_id):
             currency=valuation.latest_mev_currency,
             margin=valuation.latest_mev_margin,
             calculated_at=valuation.latest_mev_calculated_at,
+            mev_low=valuation.mev_low,
+            mev_high=valuation.mev_high,
+            pricing_request_id=valuation.pricing_request_id,
             pricing_status=valuation.pricing_status,
         )
     except Exception as exc:

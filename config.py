@@ -29,3 +29,9 @@ class Config:
     ROOTLE_RESET_TOKEN = os.getenv("ROOTLE_RESET_TOKEN")
     ATTIO_WEBHOOK_SECRET = os.getenv("ATTIO_WEBHOOK_SECRET")
     ATTIO_VALUATION_REQUEST_OBJECT_ID = os.getenv("ATTIO_VALUATION_REQUEST_OBJECT_ID")
+    PRICING_API_BASE_URL = os.getenv(
+        "PRICING_API_BASE_URL",
+        "https://rootlepricing-production-a083.up.railway.app",
+    )
+    PRICING_API_KEY = os.getenv("PRICING_API_KEY") or os.getenv("ROOTLE_PRICING_API_KEY")
+    PRICING_DEFAULT_MARGIN = os.getenv("PRICING_DEFAULT_MARGIN", "0")

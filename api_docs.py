@@ -437,7 +437,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests/{valuation_id}/mev-calculations": {
             "post": {
                 "summary": "Create an MEV calculation",
-                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot on the ERP valuation, and mirrors the latest values to Attio.",
+                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot/range on the ERP valuation, and mirrors the latest amount, currency, margin, range, pricing request id, status, and timestamp to Attio. The request must include amount, mev_low, and mev_high; margin defaults to PRICING_DEFAULT_MARGIN when omitted.",
                 "parameters": [
                     {
                         "name": "valuation_id",
@@ -452,11 +452,23 @@ OPENAPI_SPEC = {
                         "application/json": {
                             "schema": {
                                 "type": "object",
-                                "required": ["amount", "currency", "margin"],
+                                "required": ["amount", "mev_low", "mev_high"],
                                 "properties": {
                                     "amount": {"type": "number"},
+                                    "ensemble_total_prediction": {"type": "number"},
+                                    "mev_low": {"type": "number"},
+                                    "mev_high": {"type": "number"},
+                                    "low_total_prediction": {"type": "number"},
+                                    "high_total_prediction": {"type": "number"},
                                     "currency": {"type": "string"},
                                     "margin": {"type": "number"},
+                                    "pricing_request_id": {"type": "string"},
+                                    "pricing_result_id": {
+                                        "oneOf": [
+                                            {"type": "string"},
+                                            {"type": "integer"},
+                                        ]
+                                    },
                                     "calculation_method": {"type": "string"},
                                     "calculated_by": {"type": "string"},
                                     "notes": {"type": "string"},
@@ -472,6 +484,48 @@ OPENAPI_SPEC = {
                     "400": {"description": "Invalid payload"},
                     "404": {"description": "Valuation not found"},
                     "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/crm/valuation-requests/request-mev-calculation": {
+            "post": {
+                "summary": "Trigger pricing API MEV calculation",
+                "description": "Called by an Attio workflow when valuation_requests.pricing_status changes to requested_mev_calculation. Calls the Rootle Pricing API /predict endpoint, stores ensemble_total_prediction as the latest MEV, stores the prediction range and pricing id, and mirrors the latest MEV back to Attio.",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["max_category", "max_value"],
+                                "properties": {
+                                    "crm_valuation_request_id": {"type": "string"},
+                                    "record_id": {"type": "string"},
+                                    "rootle_request_id": {"type": "string"},
+                                    "pricing_status": {
+                                        "type": "string",
+                                        "enum": ["requested_mev_calculation"],
+                                    },
+                                    "max_category": {"type": "string"},
+                                    "max_value": {"type": "number"},
+                                    "other_categories": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                    },
+                                    "declared_features": {"type": "object"},
+                                    "currency": {"type": "string", "default": "GBP"},
+                                    "margin": {"type": "number"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "201": {"description": "MEV calculation created from pricing prediction"},
+                    "200": {"description": "Ignored because pricing_status did not request MEV calculation"},
+                    "400": {"description": "Invalid payload"},
+                    "404": {"description": "Valuation not found"},
+                    "502": {"description": "Pricing API or Attio sync failed"},
                 },
             }
         },
@@ -975,13 +1029,30 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-calculations</code></h3>
-          <p class="meta">Store an audited MEV calculation and mirror the latest amount, currency, margin, and timestamp to Attio.</p>
+          <p class="meta">Store an audited MEV calculation with required low/high range and mirror the latest snapshot to Attio. Margin defaults to <code>PRICING_DEFAULT_MARGIN</code> when omitted.</p>
           <pre>{
   "amount": 100.00,
+  "mev_low": 80.00,
+  "mev_high": 140.00,
   "currency": "GBP",
   "margin": 0.25,
+  "pricing_request_id": "pricing-result-or-request-id",
   "calculation_method": "manual",
   "calculated_by": "pricing-agent"
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/request-mev-calculation</code></h3>
+          <p class="meta">Trigger the Rootle Pricing API from an Attio workflow when <code>pricing_status</code> changes to <code>requested_mev_calculation</code>.</p>
+          <pre>{
+  "crm_valuation_request_id": "attio-valuation-request-record-id",
+  "pricing_status": "requested_mev_calculation",
+  "max_category": "Gold",
+  "max_value": 250.00,
+  "other_categories": ["Silver"]
 }</pre>
         </div>
       </article>

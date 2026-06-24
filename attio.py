@@ -45,7 +45,11 @@ VALUATION_REQUEST_STAGE_OPTIONS = (
     ROOTLE_STAGE_ADDRESS_AVAILABLE,
     "closed",
 )
-VALUATION_REQUEST_PRICING_STATUS_OPTIONS = ("pricing_pending", "mev_calculated")
+VALUATION_REQUEST_PRICING_STATUS_OPTIONS = (
+    "pricing_pending",
+    "requested_mev_calculation",
+    "mev_calculated",
+)
 VALUATION_REQUEST_ITEM_OPTIONS = ("gold", "silver", "coins")
 VALUATION_REQUEST_ATTRIBUTES = (
     {
@@ -193,6 +197,36 @@ VALUATION_REQUEST_ATTRIBUTES = (
         "api_slug": "latest_mev_calculated_at",
         "description": "Timestamp for the latest Rootle MEV calculation.",
         "type": "timestamp",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "MEV Low",
+        "api_slug": "mev_low",
+        "description": "Low end of the latest Rootle MEV prediction range.",
+        "type": "number",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "MEV High",
+        "api_slug": "mev_high",
+        "description": "High end of the latest Rootle MEV prediction range.",
+        "type": "number",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Pricing Request ID",
+        "api_slug": "pricing_request_id",
+        "description": "Pricing API request or result id associated with the latest MEV.",
+        "type": "text",
         "is_required": False,
         "is_unique": False,
         "is_multiselect": False,
@@ -1128,6 +1162,9 @@ def update_attio_valuation_request_mev(
     currency: str,
     margin,
     calculated_at: datetime,
+    mev_low=None,
+    mev_high=None,
+    pricing_request_id: str | None = None,
     pricing_status: str = "mev_calculated",
 ) -> str | None:
     if not valuation_request_id:
@@ -1141,6 +1178,9 @@ def update_attio_valuation_request_mev(
                 "latest_mev_currency": currency,
                 "latest_mev_margin": float(margin),
                 "latest_mev_calculated_at": calculated_at.isoformat(),
+                "mev_low": float(mev_low) if mev_low is not None else None,
+                "mev_high": float(mev_high) if mev_high is not None else None,
+                "pricing_request_id": pricing_request_id,
                 "pricing_status": pricing_status,
             }
         }

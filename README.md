@@ -113,6 +113,9 @@ It creates the `Valuation Request` object with attributes for:
 - `latest_mev_currency`
 - `latest_mev_margin`
 - `latest_mev_calculated_at`
+- `mev_low`
+- `mev_high`
+- `pricing_request_id`
 
 ### Item submission / valuation request
 
@@ -192,7 +195,7 @@ POST /api/crm/contact-details
 ### MEV calculations
 
 After an item submission creates a `valuation_requests` row, pricing can store an MEV
-calculation against that valuation:
+calculation and expected range against that valuation:
 
 ```http
 POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
@@ -201,8 +204,11 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 ```json
 {
   "amount": 100.00,
+  "mev_low": 80.00,
+  "mev_high": 140.00,
   "currency": "GBP",
   "margin": 0.25,
+  "pricing_request_id": "pricing-result-or-request-id",
   "calculation_method": "manual",
   "calculated_by": "pricing-agent",
   "inputs": {
@@ -211,13 +217,23 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 }
 ```
 
+Required fields are `amount`, `mev_low`, and `mev_high`. `currency` defaults to
+`GBP`, and `margin` defaults to `PRICING_DEFAULT_MARGIN` when omitted.
+
+The endpoint also accepts the pricing API response shape directly. In that case,
+`ensemble_total_prediction` becomes the latest MEV amount, `range.total.low` and
+`range.total.high` become `mev_low` and `mev_high`, and `pricing_result_id` is
+stored as `pricing_request_id`. Flat `low_total_prediction`,
+`high_total_prediction`, and `pricing_request_id` fields are also accepted.
+
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
-currency, margin, and calculation timestamp are also stored on `valuation_requests`
-and mirrored to the linked Attio `valuation_requests` record. MEV calculation
-also changes `pricing_status` from `pricing_pending` to `mev_calculated`; it does
-not change `rootle_stage`, which remains the customer data completeness signal
-(`item_details_available` without address details, `address_available` with
-address details).
+currency, margin, calculation timestamp, MEV range, and pricing request id are
+also stored on `valuation_requests`. The latest amount, currency, margin, and
+timestamp are mirrored to the linked Attio `valuation_requests` record. MEV
+calculation also changes `pricing_status` from `pricing_pending` to
+`mev_calculated`; it does not change `rootle_stage`, which remains the customer
+data completeness signal (`item_details_available` without address details,
+`address_available` with address details).
 
 Pricing workers can list ERP valuation cases that are waiting for an MEV:
 
@@ -228,6 +244,31 @@ GET /api/crm/valuation-requests?needs_mev=true
 Supported filters include `status`, `current_stage`, `pricing_status`, `needs_mev`,
 `attio_id`/`crm_person_record_id`, `crm_valuation_request_id`,
 `rootle_request_id`, `limit`, and `offset`.
+
+Attio can also trigger the hosted pricing model when a valuation request's
+`pricing_status` changes to `requested_mev_calculation`. Configure the Attio
+workflow to send an authenticated request to:
+
+```http
+POST /api/crm/valuation-requests/request-mev-calculation
+```
+
+```json
+{
+  "crm_valuation_request_id": "attio-valuation-request-record-id",
+  "pricing_status": "requested_mev_calculation",
+  "max_category": "Gold",
+  "max_value": 250.00,
+  "other_categories": ["Silver"]
+}
+```
+
+The endpoint calls `PRICING_API_BASE_URL` `/predict` using `PRICING_API_KEY`
+when configured. It stores `ensemble_total_prediction` as the latest GBP MEV,
+stores `range.total.low`/`range.total.high` as the MEV range, maps
+`pricing_result_id` to `pricing_request_id`, uses `PRICING_DEFAULT_MARGIN`
+unless `margin` is supplied in the request, writes an audit row with the pricing
+request/response, and mirrors the latest MEV back to Attio.
 
 One valuation case can be fetched with:
 
