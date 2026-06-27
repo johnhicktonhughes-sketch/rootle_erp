@@ -200,6 +200,12 @@ class LeadValuation(db.Model, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="InboundLabel.created_at.desc()",
     )
+    postage_opportunities = db.relationship(
+        "PostageOpportunity",
+        back_populates="valuation",
+        cascade="all, delete-orphan",
+        order_by="PostageOpportunity.created_at.desc()",
+    )
 
 
 class FailedValuationRequestSubmission(db.Model, TimestampMixin):
@@ -285,6 +291,32 @@ class InboundLabel(db.Model, TimestampMixin):
     meta = db.Column(db.JSON)
 
     valuation = db.relationship("LeadValuation", back_populates="inbound_labels")
+
+
+class PostageOpportunity(db.Model, TimestampMixin):
+    __tablename__ = "postage_opportunities"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_valuation_id = db.Column(
+        db.Integer,
+        db.ForeignKey("valuation_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    crm_person_record_id = db.Column(db.String(128), nullable=False, index=True)
+    crm_valuation_request_id = db.Column(db.String(128), nullable=False, index=True)
+    crm_postage_opportunity_id = db.Column(db.String(128), unique=True, nullable=False)
+    rootle_request_id = db.Column(db.String(128), nullable=False, index=True)
+    rootle_postage_opportunity_id = db.Column(db.String(128), unique=True, nullable=False)
+    barcode_value = db.Column(db.String(256), unique=True, nullable=False)
+    qr_payload = db.Column(db.String(1024), nullable=False)
+    status = db.Column(db.String(64), default="created", nullable=False)
+    triggered_by = db.Column(db.String(128))
+    triggered_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    notes = db.Column(db.Text)
+    meta = db.Column(db.JSON)
+
+    valuation = db.relationship("LeadValuation", back_populates="postage_opportunities")
 
 
 class ValuationItemCategory(db.Model, TimestampMixin):

@@ -27,6 +27,9 @@ class TestConfig:
     PRICING_API_BASE_URL = "https://pricing.example.test"
     PRICING_API_KEY = "pricing-test-key"
     PRICING_DEFAULT_MARGIN = "0.3000"
+    KLAVIYO_API_KEY = None
+    KLAVIYO_API_BASE_URL = "https://klaviyo.example.test"
+    KLAVIYO_API_REVISION = "2026-04-15"
 
 
 class ValuationRequestTests(unittest.TestCase):
@@ -239,6 +242,79 @@ class ValuationRequestTests(unittest.TestCase):
             "customer_details_received",
         )
         self.assertEqual(data["updated_erp_valuations"][0]["postcode"], "TS42QN")
+        self.assertEqual(data["klaviyo_sync"]["status"], "skipped")
+
+    def test_contact_details_sync_email_to_klaviyo_profile(self):
+        klaviyo_syncs = []
+
+        def update_attio_person_contact_details(**kwargs):
+            return kwargs["person_record_id"]
+
+        def update_attio_valuation_request_stage_3(**kwargs):
+            return kwargs["valuation_request_id"]
+
+        def upsert_profile_from_attio_contact(**kwargs):
+            klaviyo_syncs.append(kwargs)
+            return {"status": "success", "integration_log_id": 42}
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_klaviyo",
+            update_attio_person_contact_details=update_attio_person_contact_details,
+            update_attio_valuation_request_stage_3=update_attio_valuation_request_stage_3,
+        )
+        klaviyo = types.SimpleNamespace(
+            upsert_profile_from_attio_contact=upsert_profile_from_attio_contact,
+        )
+
+        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
+            self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_klaviyo",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_klaviyo",
+                },
+            )
+            response = self.client.post(
+                "/api/crm/contact-details",
+                json={
+                    "attio_id": "person_klaviyo",
+                    "email": "customer@example.com",
+                    "attio_valuation_request_id": "vr_klaviyo",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["klaviyo_sync"]["status"], "success")
+        self.assertEqual(klaviyo_syncs[0]["email"], "customer@example.com")
+        self.assertEqual(
+            klaviyo_syncs[0]["attio_person_record_id"],
+            "person_klaviyo",
+        )
+        self.assertEqual(
+            klaviyo_syncs[0]["properties"]["rootle_stage"],
+            "address_available",
+        )
+
+    def test_klaviyo_profile_payload_uses_attio_external_id(self):
+        from klaviyo import _profile_payload
+
+        payload = _profile_payload(
+            email="customer@example.com",
+            attio_person_record_id="person_123",
+            properties={"rootle_stage": "address_available"},
+        )
+
+        self.assertEqual(payload["data"]["type"], "profile")
+        attributes = payload["data"]["attributes"]
+        self.assertEqual(attributes["email"], "customer@example.com")
+        self.assertEqual(attributes["external_id"], "person_123")
+        self.assertEqual(attributes["properties"]["source"], "attio")
+        self.assertEqual(
+            attributes["properties"]["rootle_stage"],
+            "address_available",
+        )
 
     def test_attio_person_contact_values_use_rootle_address_fields(self):
         from attio import (
@@ -1039,6 +1115,98 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(scan_data["status"], "label_scanned")
         self.assertEqual(scan_data["valuation"]["id"], valuation_id)
         self.assertEqual(scan_data["valuation"]["item_photo_url"], "https://example.com/item.jpg")
+
+    def test_postage_opportunity_requires_mev_and_creates_attio_record(self):
+        postage_payloads = []
+
+        def create_attio_postage_opportunity(**kwargs):
+            postage_payloads.append(kwargs)
+            return {
+                "record_id": "po_attio_123",
+                "barcode_value": "po_attio_123",
+                "qr_payload": "po_attio_123",
+                "barcode_image": "data:image/svg+xml;base64,barcode",
+                "qr_code_image": "data:image/svg+xml;base64,qr",
+            }
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_postage",
+            update_attio_valuation_request_mev=lambda **kwargs: kwargs[
+                "valuation_request_id"
+            ],
+            create_attio_postage_opportunity=create_attio_postage_opportunity,
+        )
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            create_response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_postage",
+                    "items": ["gold"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_postage",
+                },
+            )
+            valuation_id = create_response.get_json()["valuation"]["id"]
+
+            not_ready_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/postage-opportunity",
+                json={"triggered_by": "ops"},
+            )
+
+            self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/mev-calculations",
+                json={
+                    "amount": "150.00",
+                    "currency": "GBP",
+                    "margin": "0.2500",
+                    "mev_low": "120.00",
+                    "mev_high": "180.00",
+                },
+            )
+            postage_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/postage-opportunity",
+                json={"triggered_by": "ops", "notes": "Manual promotion"},
+            )
+            duplicate_response = self.client.post(
+                f"/api/crm/valuation-requests/{valuation_id}/postage-opportunity",
+                json={"triggered_by": "ops"},
+            )
+
+        self.assertEqual(not_ready_response.status_code, 400)
+        self.assertEqual(
+            not_ready_response.get_json()["error"],
+            "valuation_not_ready_for_postage_opportunity",
+        )
+        self.assertEqual(postage_response.status_code, 201)
+        self.assertEqual(duplicate_response.status_code, 200)
+        self.assertEqual(len(postage_payloads), 1)
+        self.assertEqual(postage_payloads[0]["person_record_id"], "person_postage")
+        self.assertEqual(postage_payloads[0]["valuation_request_id"], "vr_postage")
+        self.assertEqual(postage_payloads[0]["rootle_request_id"], "request_postage")
+        self.assertNotIn("barcode_value", postage_payloads[0])
+        self.assertNotIn("qr_payload", postage_payloads[0])
+
+        postage_data = postage_response.get_json()["postage_opportunity"]
+        self.assertEqual(postage_data["crm_postage_opportunity_id"], "po_attio_123")
+        self.assertEqual(postage_data["crm_person_record_id"], "person_postage")
+        self.assertEqual(postage_data["crm_valuation_request_id"], "vr_postage")
+        self.assertEqual(postage_data["triggered_by"], "ops")
+        self.assertEqual(postage_data["barcode_value"], "po_attio_123")
+        self.assertEqual(postage_data["qr_payload"], "po_attio_123")
+        self.assertTrue(postage_data["meta"]["barcode_image"].startswith("data:image/svg+xml"))
+        self.assertTrue(postage_data["meta"]["qr_code_image"].startswith("data:image/svg+xml"))
+        self.assertEqual(postage_data["valuation"]["id"], valuation_id)
+        self.assertFalse(duplicate_response.get_json()["postage_opportunity_created"])
+
+        scan_response = self.client.post(
+            f"/api/crm/postage-opportunities/scan/{postage_data['barcode_value']}"
+        )
+        self.assertEqual(scan_response.status_code, 200)
+        self.assertEqual(
+            scan_response.get_json()["postage_opportunity"]["status"],
+            "scanned",
+        )
 
     def test_high_value_inbound_label_defaults_to_white_glove(self):
         attio = types.SimpleNamespace(

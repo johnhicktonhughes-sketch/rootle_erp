@@ -22,6 +22,7 @@ from models import (
     LeadEstimate,
     LeadValuation,
     LeadValuationMevCalculation,
+    PostageOpportunity,
     ValuationItemCategory,
 )
 
@@ -93,6 +94,10 @@ def _valuation_to_dict(valuation):
         calculation.to_dict() for calculation in valuation.mev_calculations
     ]
     data["inbound_labels"] = [_label_to_dict(label) for label in valuation.inbound_labels]
+    data["postage_opportunities"] = [
+        _postage_opportunity_to_dict(opportunity)
+        for opportunity in valuation.postage_opportunities
+    ]
     data["label_eligibility"] = _label_eligibility_for_valuation(valuation)
     return data
 
@@ -180,6 +185,15 @@ def _label_to_dict(label, include_context=False):
         data["valuation"] = _valuation_to_dict(label.valuation)
         data["expected_items"] = label.valuation.item_categories
         data["item_photo_url"] = label.valuation.item_photo_url
+    return data
+
+
+def _postage_opportunity_to_dict(opportunity, include_context=False):
+    data = opportunity.to_dict()
+    if include_context:
+        data["valuation"] = _valuation_to_dict(opportunity.valuation)
+        data["expected_items"] = opportunity.valuation.item_categories
+        data["item_photo_url"] = opportunity.valuation.item_photo_url
     return data
 
 
@@ -498,6 +512,12 @@ def _default_label_routing(valuation, payload):
 
 def _scan_payload_for_label(rootle_label_id):
     path = f"/api/crm/inbound-labels/scan/{rootle_label_id}"
+    base_url = request.url_root.rstrip("/") if request else ""
+    return f"{base_url}{path}" if base_url else path
+
+
+def _scan_payload_for_postage_opportunity(barcode_value):
+    path = f"/api/crm/postage-opportunities/scan/{barcode_value}"
     base_url = request.url_root.rstrip("/") if request else ""
     return f"{base_url}{path}" if base_url else path
 
@@ -1613,6 +1633,148 @@ def sync_valuation_mev_to_attio(valuation_id):
     )
 
 
+@crm_bp.route("/crm/valuation-requests/<int:valuation_id>/postage-opportunity", methods=["POST"])
+def create_postage_opportunity(valuation_id):
+    valuation = LeadValuation.query.get_or_404(valuation_id)
+    payload = request.get_json() or {}
+
+    if valuation.pricing_status != "mev_calculated":
+        return (
+            jsonify(
+                {
+                    "error": "valuation_not_ready_for_postage_opportunity",
+                    "message": "Valuation pricing_status must be mev_calculated.",
+                    "pricing_status": valuation.pricing_status,
+                }
+            ),
+            400,
+        )
+
+    if not valuation.crm_valuation_request_id:
+        return (
+            jsonify(
+                {
+                    "error": "missing_crm_valuation_request_id",
+                    "message": "Valuation is not linked to an Attio valuation request.",
+                }
+            ),
+            400,
+        )
+
+    existing_opportunity = (
+        PostageOpportunity.query.filter_by(lead_valuation_id=valuation.id)
+        .order_by(PostageOpportunity.created_at.desc())
+        .first()
+    )
+    if existing_opportunity:
+        return (
+            jsonify(
+                {
+                    "postage_opportunity": _postage_opportunity_to_dict(
+                        existing_opportunity,
+                        include_context=True,
+                    ),
+                    "postage_opportunity_created": False,
+                }
+            ),
+            200,
+        )
+
+    rootle_postage_opportunity_id = (
+        _required_string(payload, "rootle_postage_opportunity_id")
+        or f"postage-{uuid4().hex}"
+    )
+    triggered_at = datetime.utcnow()
+    triggered_by = _required_string(payload, "triggered_by")
+    notes = _required_string(payload, "notes")
+
+    try:
+        from attio import create_attio_postage_opportunity
+
+        attio_postage_opportunity = create_attio_postage_opportunity(
+            person_record_id=valuation.crm_person_record_id,
+            valuation_request_id=valuation.crm_valuation_request_id,
+            rootle_request_id=valuation.rootle_request_id,
+            rootle_postage_opportunity_id=rootle_postage_opportunity_id,
+            triggered_at=triggered_at,
+            triggered_by=triggered_by,
+            latest_mev_amount=valuation.latest_mev_amount,
+            latest_mev_currency=valuation.latest_mev_currency,
+        )
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+    if isinstance(attio_postage_opportunity, str):
+        crm_postage_opportunity_id = attio_postage_opportunity
+        barcode_value = crm_postage_opportunity_id
+        qr_payload = crm_postage_opportunity_id
+        postage_asset_meta = {}
+    else:
+        crm_postage_opportunity_id = attio_postage_opportunity["record_id"]
+        barcode_value = attio_postage_opportunity["barcode_value"]
+        qr_payload = attio_postage_opportunity["qr_payload"]
+        postage_asset_meta = {
+            key: attio_postage_opportunity.get(key)
+            for key in ("barcode_image", "qr_code_image")
+            if attio_postage_opportunity.get(key)
+        }
+
+    opportunity = PostageOpportunity(
+        lead_valuation_id=valuation.id,
+        crm_person_record_id=valuation.crm_person_record_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        crm_postage_opportunity_id=crm_postage_opportunity_id,
+        rootle_request_id=valuation.rootle_request_id,
+        rootle_postage_opportunity_id=rootle_postage_opportunity_id,
+        barcode_value=barcode_value,
+        qr_payload=qr_payload,
+        status="created",
+        triggered_by=triggered_by,
+        triggered_at=triggered_at,
+        notes=notes,
+        meta={
+            **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
+            **postage_asset_meta,
+        },
+    )
+    db.session.add(opportunity)
+    valuation.current_stage = "postage_opportunity_created"
+    valuation.status = "postage_opportunity_created"
+    db.session.commit()
+
+    return (
+        jsonify(
+            {
+                "postage_opportunity": _postage_opportunity_to_dict(
+                    opportunity,
+                    include_context=True,
+                ),
+                "postage_opportunity_created": True,
+            }
+        ),
+        201,
+    )
+
+
+@crm_bp.route("/crm/postage-opportunities/scan/<barcode_value>", methods=["GET", "POST"])
+def scan_postage_opportunity(barcode_value):
+    opportunity = PostageOpportunity.query.filter_by(barcode_value=barcode_value).first_or_404()
+
+    if request.method == "POST" and opportunity.status == "created":
+        opportunity.status = "scanned"
+        db.session.commit()
+
+    return jsonify(
+        {
+            "postage_opportunity": _postage_opportunity_to_dict(
+                opportunity,
+                include_context=True,
+            )
+        }
+    )
+
+
 @crm_bp.route("/crm/valuation-requests/<int:valuation_id>/inbound-labels", methods=["POST"])
 def create_inbound_label(valuation_id):
     valuation = LeadValuation.query.get_or_404(valuation_id)
@@ -1827,10 +1989,33 @@ def submit_contact_details():
 
     db.session.commit()
 
+    klaviyo_sync = {"status": "skipped", "reason": "missing_email"}
+    if email:
+        try:
+            from klaviyo import upsert_profile_from_attio_contact
+
+            klaviyo_sync = upsert_profile_from_attio_contact(
+                email=email,
+                attio_person_record_id=person_record_id,
+                properties={
+                    "rootle_stage": "address_available",
+                    "crm_person_record_id": person_record_id,
+                    "crm_valuation_request_ids": [
+                        item.crm_valuation_request_id
+                        for item in valuations
+                        if item.crm_valuation_request_id
+                    ],
+                    "erp_valuation_request_ids": [item.id for item in valuations],
+                },
+            )
+        except Exception as exc:
+            klaviyo_sync = {"status": "failed", "message": str(exc)}
+
     return jsonify(
         {
             "attio_id": person_record_id,
             "crm_person_record_id": person_record_id,
+            "klaviyo_sync": klaviyo_sync,
             "updated_erp_valuations": [_valuation_to_dict(item) for item in valuations],
         }
     )

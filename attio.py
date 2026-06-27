@@ -1,4 +1,6 @@
 import os
+import base64
+from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +34,10 @@ ATTIO_VALUATION_REQUEST_OBJECT_SLUG = os.getenv(
     "ATTIO_VALUATION_REQUEST_OBJECT_SLUG",
     "valuation_requests",
 )
+ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG = os.getenv(
+    "ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG",
+    "postage_opportunity",
+)
 ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
 ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
 ROOTLE_STAGE_ADDRESS_AVAILABLE = "address_available"
@@ -51,6 +57,7 @@ VALUATION_REQUEST_PRICING_STATUS_OPTIONS = (
     "mev_calculated",
 )
 VALUATION_REQUEST_ITEM_OPTIONS = ("gold", "silver", "coins")
+POSTAGE_OPPORTUNITY_STATUS_OPTIONS = ("created", "cancelled", "completed")
 VALUATION_REQUEST_ATTRIBUTES = (
     {
         "title": "Request Title",
@@ -233,6 +240,128 @@ VALUATION_REQUEST_ATTRIBUTES = (
         "config": {},
     },
 )
+POSTAGE_OPPORTUNITY_ATTRIBUTES = (
+    {
+        "title": "Opportunity Title",
+        "api_slug": "opportunity_title",
+        "description": "Human-readable label for the postage opportunity.",
+        "type": "text",
+        "is_required": True,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Rootle Postage Opportunity ID",
+        "api_slug": "rootle_postage_opportunity_id",
+        "description": "Stable Rootle identifier for this postage opportunity.",
+        "type": "text",
+        "is_required": True,
+        "is_unique": True,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Rootle Request ID",
+        "api_slug": "rootle_request_id",
+        "description": "Rootle valuation request identifier that produced this postage opportunity.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "QR Payload",
+        "api_slug": "qr_payload",
+        "description": "Attio postage opportunity record id encoded in the QR image.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": True,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Barcode Value",
+        "api_slug": "barcode_value",
+        "description": "Attio postage opportunity record id encoded in the barcode image.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": True,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "QR Code Image",
+        "api_slug": "qr_code_image",
+        "description": "SVG data URI for the QR code image.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Barcode Image",
+        "api_slug": "barcode_image",
+        "description": "SVG data URI for the barcode image.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Status",
+        "api_slug": "status",
+        "description": "Current postage opportunity workflow state.",
+        "type": "select",
+        "is_required": True,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Triggered By",
+        "api_slug": "triggered_by",
+        "description": "Operator or system that manually created the postage opportunity.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Triggered At",
+        "api_slug": "triggered_at",
+        "description": "Timestamp when Rootle created this postage opportunity.",
+        "type": "timestamp",
+        "is_required": True,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Latest MEV Amount",
+        "api_slug": "latest_mev_amount",
+        "description": "Latest Rootle MEV amount at promotion time.",
+        "type": "number",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
+        "title": "Latest MEV Currency",
+        "api_slug": "latest_mev_currency",
+        "description": "Currency for the latest Rootle MEV at promotion time.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+)
 MARKETING_ATTRIBUTION_ATTRIBUTES = (
     {
         "title": "Rootle Lead Source",
@@ -369,6 +498,50 @@ def _attio_url(path: str) -> str:
     return f"{ATTIO_API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
 
 
+def _svg_data_uri(svg_bytes: bytes) -> str:
+    encoded = base64.b64encode(svg_bytes).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _qr_code_svg_data_uri(value: str) -> str:
+    try:
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+    except ImportError as exc:
+        raise AttioError(
+            "QR code generation requires the qrcode package. Install requirements.txt."
+        ) from exc
+
+    qr = qrcode.QRCode(border=2)
+    qr.add_data(value)
+    qr.make(fit=True)
+    image = qr.make_image(image_factory=SvgPathImage)
+    buffer = BytesIO()
+    image.save(buffer)
+    return _svg_data_uri(buffer.getvalue())
+
+
+def _barcode_svg_data_uri(value: str) -> str:
+    try:
+        from barcode import Code128
+        from barcode.writer import SVGWriter
+    except ImportError as exc:
+        raise AttioError(
+            "Barcode generation requires the python-barcode package. Install requirements.txt."
+        ) from exc
+
+    buffer = BytesIO()
+    Code128(value, writer=SVGWriter()).write(
+        buffer,
+        options={
+            "write_text": False,
+            "quiet_zone": 2,
+            "module_height": 18,
+        },
+    )
+    return _svg_data_uri(buffer.getvalue())
+
+
 def _lead_description(lead: Lead) -> str:
     lines = ["Rootle ERP lead"]
     if lead.stage:
@@ -501,6 +674,54 @@ def _valuation_request_values(
         "valuation_guide_id": valuation_guide_id,
         "valuation_guide_url": valuation_guide_url,
         "source": source,
+    }
+    values.update(
+        {
+            key: value
+            for key, value in optional_values.items()
+            if value is not None and str(value).strip()
+        }
+    )
+    return values
+
+
+def _postage_opportunity_values(
+    *,
+    person_record_id: str,
+    valuation_request_id: str,
+    rootle_request_id: str,
+    rootle_postage_opportunity_id: str,
+    triggered_at: datetime,
+    triggered_by: str | None = None,
+    latest_mev_amount=None,
+    latest_mev_currency: str | None = None,
+) -> dict:
+    values = {
+        "opportunity_title": f"Postage opportunity {rootle_request_id}",
+        "rootle_postage_opportunity_id": rootle_postage_opportunity_id,
+        "rootle_request_id": rootle_request_id,
+        "status": "created",
+        "triggered_at": triggered_at.isoformat(),
+        "person": [
+            {
+                "target_object": ATTIO_OBJECT_SLUG,
+                "target_record_id": person_record_id,
+            }
+        ],
+        "valuation_request": [
+            {
+                "target_object": ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
+                "target_record_id": valuation_request_id,
+            }
+        ],
+    }
+
+    optional_values = {
+        "triggered_by": triggered_by,
+        "latest_mev_amount": (
+            float(latest_mev_amount) if latest_mev_amount is not None else None
+        ),
+        "latest_mev_currency": latest_mev_currency,
     }
     values.update(
         {
@@ -662,6 +883,7 @@ def delete_all_attio_records(
 ) -> dict:
     """Delete all records from the Rootle-owned Attio objects."""
     object_slugs = object_slugs or (
+        ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG,
         ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
         ATTIO_OBJECT_SLUG,
     )
@@ -772,6 +994,18 @@ def _create_object_attribute(object_slug: str, attribute: dict) -> dict:
             None,
         )
         if existing:
+            if existing.get("is_required") and not attribute.get("is_required"):
+                update_response = _attio_request(
+                    "PATCH",
+                    f"objects/{object_slug}/attributes/{attribute['api_slug']}",
+                    json={"data": {"is_required": False}},
+                )
+                if not update_response.ok:
+                    raise AttioError(
+                        "Attio API returned "
+                        f"{update_response.status_code}: {update_response.text}"
+                    )
+                return update_response.json()["data"]
             return existing
     if not response.ok:
         raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
@@ -874,6 +1108,75 @@ def ensure_valuation_request_object() -> dict:
 
     return {
         "object": valuation_request_object,
+        "attributes": ensured_attributes,
+    }
+
+
+def ensure_postage_opportunity_object() -> dict:
+    ensure_valuation_request_object()
+    postage_opportunity_object = _create_attio_object(
+        ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG,
+        "Postage Opportunity",
+        "Postage Opportunities",
+    )
+
+    ensured_attributes = []
+    for attribute in POSTAGE_OPPORTUNITY_ATTRIBUTES:
+        ensured_attributes.append(
+            _create_object_attribute(ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG, attribute)
+        )
+
+    person_attribute = {
+        "title": "Person",
+        "api_slug": "person",
+        "description": "Person linked to this postage opportunity.",
+        "type": "record-reference",
+        "is_required": True,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+        "relationship": {
+            "object": ATTIO_OBJECT_SLUG,
+            "title": "Postage Opportunities",
+            "api_slug": "postage_opportunities",
+            "is_multiselect": True,
+        },
+    }
+    ensured_attributes.append(
+        _create_object_attribute(ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG, person_attribute)
+    )
+
+    valuation_request_attribute = {
+        "title": "Valuation Request",
+        "api_slug": "valuation_request",
+        "description": "Valuation request that produced this postage opportunity.",
+        "type": "record-reference",
+        "is_required": True,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+        "relationship": {
+            "object": ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
+            "title": "Postage Opportunities",
+            "api_slug": "postage_opportunities",
+            "is_multiselect": True,
+        },
+    }
+    ensured_attributes.append(
+        _create_object_attribute(
+            ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG,
+            valuation_request_attribute,
+        )
+    )
+
+    _ensure_select_options(
+        ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG,
+        "status",
+        POSTAGE_OPPORTUNITY_STATUS_OPTIONS,
+    )
+
+    return {
+        "object": postage_opportunity_object,
         "attributes": ensured_attributes,
     }
 
@@ -1203,6 +1506,83 @@ def update_attio_valuation_request_mev(
         raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
 
     return valuation_request_id
+
+
+def create_attio_postage_opportunity(
+    *,
+    person_record_id: str,
+    valuation_request_id: str,
+    rootle_request_id: str,
+    rootle_postage_opportunity_id: str,
+    triggered_at: datetime,
+    triggered_by: str | None = None,
+    latest_mev_amount=None,
+    latest_mev_currency: str | None = None,
+) -> dict:
+    ensure_postage_opportunity_object()
+    payload = {
+        "data": {
+            "values": _postage_opportunity_values(
+                person_record_id=person_record_id,
+                valuation_request_id=valuation_request_id,
+                rootle_request_id=rootle_request_id,
+                rootle_postage_opportunity_id=rootle_postage_opportunity_id,
+                triggered_at=triggered_at,
+                triggered_by=triggered_by,
+                latest_mev_amount=latest_mev_amount,
+                latest_mev_currency=latest_mev_currency,
+            )
+        }
+    }
+    response = requests.post(
+        _attio_url(f"objects/{ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG}/records"),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_attio_result(
+        entity_type="postage_opportunity",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    if not log.external_id:
+        raise AttioError("Attio did not return a postage opportunity record id.")
+
+    record_id = log.external_id
+    image_values = {
+        "barcode_value": record_id,
+        "qr_payload": record_id,
+        "barcode_image": _barcode_svg_data_uri(record_id),
+        "qr_code_image": _qr_code_svg_data_uri(record_id),
+    }
+    image_payload = {"data": {"values": image_values}}
+    image_response = requests.patch(
+        _attio_url(
+            f"objects/{ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG}/records/{record_id}"
+        ),
+        json=image_payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="postage_opportunity_assets",
+        payload=image_payload,
+        response=image_response,
+    )
+
+    if not image_response.ok:
+        raise AttioError(
+            f"Attio API returned {image_response.status_code}: {image_response.text}"
+        )
+
+    return {
+        "record_id": record_id,
+        **image_values,
+    }
 
 
 def update_attio_valuation_request_stage_3(

@@ -549,6 +549,75 @@ OPENAPI_SPEC = {
                 },
             }
         },
+        "/api/crm/valuation-requests/{valuation_id}/postage-opportunity": {
+            "post": {
+                "summary": "Create a postage opportunity",
+                "description": "Manually promotes a valuation with pricing_status=mev_calculated into a linked Attio postage_opportunity record. The ERP creates the Attio record first, then appends QR/barcode images that scan to the Attio postage opportunity record id.",
+                "parameters": [
+                    {
+                        "name": "valuation_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "triggered_by": {"type": "string"},
+                                    "notes": {"type": "string"},
+                                    "rootle_postage_opportunity_id": {"type": "string"},
+                                    "metadata": {"type": "object"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "201": {"description": "Postage opportunity created"},
+                    "200": {"description": "Existing postage opportunity returned"},
+                    "400": {"description": "Valuation is not ready or missing Attio link"},
+                    "404": {"description": "Valuation not found"},
+                    "502": {"description": "Attio sync failed"},
+                },
+            }
+        },
+        "/api/crm/postage-opportunities/scan/{barcode_value}": {
+            "get": {
+                "summary": "Resolve a postage opportunity barcode",
+                "parameters": [
+                    {
+                        "name": "barcode_value",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Postage opportunity details"},
+                    "404": {"description": "Postage opportunity not found"},
+                },
+            },
+            "post": {
+                "summary": "Record a postage opportunity scan",
+                "parameters": [
+                    {
+                        "name": "barcode_value",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {
+                    "200": {"description": "Postage opportunity scan recorded"},
+                    "404": {"description": "Postage opportunity not found"},
+                },
+            },
+        },
         "/api/crm/valuation-requests/{valuation_id}/inbound-labels": {
             "post": {
                 "summary": "Create an inbound label",
@@ -1061,6 +1130,24 @@ DOCS_HTML = """<!doctype html>
         <div>
           <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-sync</code></h3>
           <p class="meta">Retry mirroring the latest ERP MEV snapshot to Attio without creating a new MEV calculation row.</p>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/valuation-requests/{valuation_id}/postage-opportunity</code></h3>
+          <p class="meta">Manually create a linked Attio <code>postage_opportunity</code> once <code>pricing_status</code> is <code>mev_calculated</code>. QR/barcode images are appended after Attio returns the postage opportunity record id.</p>
+          <pre>{
+  "triggered_by": "ops",
+  "notes": "Manual promotion after MEV review"
+}</pre>
+        </div>
+      </article>
+      <article class="endpoint">
+        <span class="method post">POST</span>
+        <div>
+          <h3><code>/api/crm/postage-opportunities/scan/{barcode_value}</code></h3>
+          <p class="meta">Record a postage opportunity barcode/QR scan and return linked person, valuation request, expected items, and submitted photo context.</p>
         </div>
       </article>
       <article class="endpoint">

@@ -8,6 +8,7 @@ A lightweight ERP backbone for CRM, pricing, website data, and Slack integration
 - SQLAlchemy database setup in `database.py`
 - ERP domain model in `models.py`
 - CRM blueprint in `routes/crm.py`
+- Klaviyo profile sync helper in `klaviyo.py`
 - Configuration via `config.py`
 
 ## Initial database shape
@@ -175,7 +176,8 @@ database lookup.
 ### Contact details
 
 Email and address can arrive before or after item submission. These details update
-the Attio person record and any matching ERP valuation cases.
+the Attio person record, any matching ERP valuation cases, and Klaviyo when an
+email address is present.
 
 ```http
 POST /api/crm/contact-details
@@ -287,6 +289,19 @@ The sync retry requires `latest_mev_amount`, `latest_mev_currency`,
 `latest_mev_margin`, and `latest_mev_calculated_at` to already exist on the ERP
 valuation.
 
+### Klaviyo profile sync
+
+Set `KLAVIYO_API_KEY` in `.env` to a Klaviyo private API key with profile write
+access. `KLAVIYO_API_BASE_URL` defaults to `https://a.klaviyo.com`, and
+`KLAVIYO_API_REVISION` defaults to `2026-04-15`.
+
+The first Klaviyo handoff runs when `/api/crm/contact-details` receives an email
+address. The ERP creates or updates a Klaviyo profile using the Attio person
+record id as `external_id` and adds Rootle properties such as `rootle_stage`,
+`crm_person_record_id`, and related valuation request ids. Klaviyo failures do
+not block the contact-details submission; the response includes `klaviyo_sync`
+and the attempt is recorded in `integration_logs`.
+
 ### Inbound labels
 
 When a valuation has a latest GBP MEV above 100.00, the ERP can create one active
@@ -315,6 +330,43 @@ POST /api/crm/inbound-labels/scan/{barcode_value}
 MEV above 10000.00 GBP defaults to a `white_glove` dispatch method with
 `white_glove_required=true`. Courier and service values can be overridden in the
 label creation payload while the policy layer is still simple.
+
+### Postage opportunities
+
+The repo includes an idempotent setup helper for the linked Attio
+`postage_opportunity` object:
+
+```bash
+python -c "from attio import ensure_postage_opportunity_object; print(ensure_postage_opportunity_object())"
+```
+
+When a valuation request has `pricing_status=mev_calculated`, it can be manually
+promoted into a linked Attio `postage_opportunity` record:
+
+```http
+POST /api/crm/valuation-requests/{valuation_id}/postage-opportunity
+```
+
+```json
+{
+  "triggered_by": "ops",
+  "notes": "Manual promotion after MEV review"
+}
+```
+
+The endpoint creates one Attio `postage_opportunity` related to the Attio Person
+and source `valuation_requests` record. Once Attio returns the record id, the ERP
+generates QR/barcode SVG images that scan to that Attio postage opportunity id
+and patches them back onto the record. It also stores a local audit row in
+`postage_opportunities` with the Attio record id, operator, timestamp,
+`barcode_value`, and `qr_payload`. Calling the endpoint again for the same
+valuation returns the existing promotion instead of creating a duplicate.
+
+The QR payload resolves to:
+
+```http
+POST /api/crm/postage-opportunities/scan/{barcode_value}
+```
 
 ### Admin data reset
 
