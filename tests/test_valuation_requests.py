@@ -222,7 +222,6 @@ class ValuationRequestTests(unittest.TestCase):
                 "/api/crm/contact-details",
                 json={
                     "attio_id": "person_contact",
-                    "email": "customer@example.com",
                     "address_line_1": "1 Test Street",
                     "postcode": "TS42QN",
                     "attio_valuation_request_id": "vr_contact",
@@ -231,7 +230,7 @@ class ValuationRequestTests(unittest.TestCase):
 
         self.assertEqual(create_response.status_code, 201)
         self.assertEqual(contact_response.status_code, 200)
-        self.assertEqual(person_updates[0]["email"], "customer@example.com")
+        self.assertNotIn("email", person_updates[0])
         self.assertEqual(person_updates[0]["address_line_1"], "1 Test Street")
         self.assertEqual(person_updates[0]["postcode"], "TS42QN")
         self.assertEqual(stage_updates[0]["valuation_request_id"], "vr_contact")
@@ -242,60 +241,27 @@ class ValuationRequestTests(unittest.TestCase):
             "customer_details_received",
         )
         self.assertEqual(data["updated_erp_valuations"][0]["postcode"], "TS42QN")
-        self.assertEqual(data["klaviyo_sync"]["status"], "skipped")
+        self.assertNotIn("klaviyo_sync", data)
 
-    def test_contact_details_sync_email_to_klaviyo_profile(self):
-        klaviyo_syncs = []
-
+    def test_contact_details_require_address_not_email(self):
         def update_attio_person_contact_details(**kwargs):
             return kwargs["person_record_id"]
 
-        def update_attio_valuation_request_stage_3(**kwargs):
-            return kwargs["valuation_request_id"]
-
-        def upsert_profile_from_attio_contact(**kwargs):
-            klaviyo_syncs.append(kwargs)
-            return {"status": "success", "integration_log_id": 42}
-
         attio = types.SimpleNamespace(
-            create_attio_valuation_request=lambda **kwargs: "vr_klaviyo",
             update_attio_person_contact_details=update_attio_person_contact_details,
-            update_attio_valuation_request_stage_3=update_attio_valuation_request_stage_3,
-        )
-        klaviyo = types.SimpleNamespace(
-            upsert_profile_from_attio_contact=upsert_profile_from_attio_contact,
         )
 
-        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
-            self.client.post(
-                "/api/crm/valuation-requests",
-                json={
-                    "attio_id": "person_klaviyo",
-                    "items": ["gold"],
-                    "picture_url": "https://example.com/item.jpg",
-                    "rootle_request_id": "request_klaviyo",
-                },
-            )
+        with patch.dict(sys.modules, {"attio": attio}):
             response = self.client.post(
                 "/api/crm/contact-details",
                 json={
-                    "attio_id": "person_klaviyo",
+                    "attio_id": "person_contact",
                     "email": "customer@example.com",
-                    "attio_valuation_request_id": "vr_klaviyo",
                 },
             )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["klaviyo_sync"]["status"], "success")
-        self.assertEqual(klaviyo_syncs[0]["email"], "customer@example.com")
-        self.assertEqual(
-            klaviyo_syncs[0]["attio_person_record_id"],
-            "person_klaviyo",
-        )
-        self.assertEqual(
-            klaviyo_syncs[0]["properties"]["rootle_stage"],
-            "address_available",
-        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["fields"], ["address"])
 
     def test_klaviyo_profile_payload_uses_attio_external_id(self):
         from klaviyo import _profile_payload
@@ -343,9 +309,19 @@ class ValuationRequestTests(unittest.TestCase):
             _stage_1_values(
                 name="Jane Smith",
                 phone_number="+447123456789",
+                email="customer@example.com",
                 posthog_distinct_id="ph_123",
             )["rootle_stage"],
             "phone_number_available",
+        )
+        self.assertEqual(
+            _stage_1_values(
+                name="Jane Smith",
+                phone_number="+447123456789",
+                email="customer@example.com",
+                posthog_distinct_id="ph_123",
+            )["email_addresses"],
+            ["customer@example.com"],
         )
         self.assertEqual(
             _valuation_request_values(
@@ -440,10 +416,14 @@ class ValuationRequestTests(unittest.TestCase):
         ), patch(
             "attio.update_attio_person_posthog_distinct_id",
             lambda **kwargs: calls.append(("posthog", kwargs)),
+        ), patch(
+            "attio.update_attio_person_contact_details",
+            lambda **kwargs: calls.append(("contact", kwargs)),
         ):
             result = attio.get_or_create_attio_stage_1_lead(
                 name="Jane Smith",
                 phone_number="+447123456789",
+                email="customer@example.com",
                 posthog_distinct_id="ph_existing",
             )
 
@@ -459,6 +439,29 @@ class ValuationRequestTests(unittest.TestCase):
             ),
         )
         self.assertEqual(calls[1][0], "posthog")
+        self.assertEqual(
+            calls[2],
+            (
+                "contact",
+                {
+                    "person_record_id": "person_existing",
+                    "email": "customer@example.com",
+                },
+            ),
+        )
+
+    def test_stage_1_requires_email(self):
+        response = self.client.post(
+            "/api/crm/leads/stage-1",
+            json={
+                "name": "Jane Smith",
+                "phone_number": "+447123456789",
+                "posthog_distinct_id": "ph_missing_email",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["fields"], ["email"])
 
     def test_add_valuation_item_syncs_attio_option(self):
         synced_options = []

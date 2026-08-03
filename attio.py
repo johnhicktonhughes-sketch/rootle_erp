@@ -625,10 +625,11 @@ def _stage_1_values(
     *,
     name: str,
     phone_number: str,
+    email: str | None = None,
     posthog_distinct_id: str,
 ) -> dict:
     first_name, last_name = _split_name(name)
-    return {
+    values = {
         "name": [
             {
                 "first_name": first_name,
@@ -641,6 +642,9 @@ def _stage_1_values(
         ATTIO_STAGE_ATTRIBUTE_SLUG: ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
         "rootle_posthog_distinct_id": posthog_distinct_id.strip(),
     }
+    if email:
+        values["email_addresses"] = [email.strip()]
+    return values
 
 
 def _valuation_request_values(
@@ -1281,6 +1285,7 @@ def create_attio_stage_1_lead(
     *,
     name: str,
     phone_number: str,
+    email: str | None = None,
     posthog_distinct_id: str,
 ) -> str:
     ensure_stage_attribute()
@@ -1291,6 +1296,7 @@ def create_attio_stage_1_lead(
             "values": _stage_1_values(
                 name=name,
                 phone_number=phone_number,
+                email=email,
                 posthog_distinct_id=posthog_distinct_id,
             )
         }
@@ -1316,6 +1322,7 @@ def get_or_create_attio_stage_1_lead(
     *,
     name: str,
     phone_number: str,
+    email: str | None = None,
     posthog_distinct_id: str,
 ) -> dict:
     existing_record_id = find_attio_person_by_phone(phone_number)
@@ -1328,11 +1335,17 @@ def get_or_create_attio_stage_1_lead(
             person_record_id=existing_record_id,
             posthog_distinct_id=posthog_distinct_id,
         )
+        if email:
+            update_attio_person_contact_details(
+                person_record_id=existing_record_id,
+                email=email,
+            )
         return {"record_id": existing_record_id, "created": False}
 
     record_id = create_attio_stage_1_lead(
         name=name,
         phone_number=phone_number,
+        email=email,
         posthog_distinct_id=posthog_distinct_id,
     )
     return {"record_id": record_id, "created": True}

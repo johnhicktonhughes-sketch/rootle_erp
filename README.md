@@ -57,8 +57,9 @@ The API will start on `http://127.0.0.1:5000`.
 
 ### Website form stage 1
 
-The website form should send stage 1 submissions to Attio through the ERP API, without
-creating an ERP lead record yet.
+The website form should send stage 1 submissions with name, phone number, email,
+and PostHog ID to Attio through the ERP API, without creating an ERP lead record
+yet.
 
 ```http
 POST /api/crm/leads/stage-1
@@ -68,6 +69,7 @@ POST /api/crm/leads/stage-1
 {
   "name": "Jane Smith",
   "phone_number": "+447123456789",
+  "email": "jane@example.com",
   "posthog_distinct_id": "0192..."
 }
 ```
@@ -175,9 +177,9 @@ database lookup.
 
 ### Contact details
 
-Email and address can arrive before or after item submission. These details update
-the Attio person record, any matching ERP valuation cases, and Klaviyo when an
-email address is present.
+Address details can arrive before or after item submission. These details update
+the Attio person record and any matching ERP valuation cases. Email is captured
+during stage 1.
 
 ```http
 POST /api/crm/contact-details
@@ -186,7 +188,6 @@ POST /api/crm/contact-details
 ```json
 {
   "attio_id": "person-record-id",
-  "email": "jane@example.com",
   "address_line_1": "1 Street",
   "city": "London",
   "postcode": "SW1A 1AA",
@@ -295,12 +296,9 @@ Set `KLAVIYO_API_KEY` in `.env` to a Klaviyo private API key with profile write
 access. `KLAVIYO_API_BASE_URL` defaults to `https://a.klaviyo.com`, and
 `KLAVIYO_API_REVISION` defaults to `2026-04-15`.
 
-The first Klaviyo handoff runs when `/api/crm/contact-details` receives an email
-address. The ERP creates or updates a Klaviyo profile using the Attio person
-record id as `external_id` and adds Rootle properties such as `rootle_stage`,
-`crm_person_record_id`, and related valuation request ids. Klaviyo failures do
-not block the contact-details submission; the response includes `klaviyo_sync`
-and the attempt is recorded in `integration_logs`.
+The Klaviyo profile helper creates or updates a Klaviyo profile using the Attio
+person record id as `external_id` and adds Rootle properties such as
+`rootle_stage` and `crm_person_record_id`.
 
 ### Inbound labels
 

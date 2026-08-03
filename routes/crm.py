@@ -846,6 +846,7 @@ def submit_stage_1_crm_lead():
     payload = request.get_json() or {}
     name = _required_string(payload, "name")
     phone_number = _required_string(payload, "phone_number")
+    email = _required_string(payload, "email")
     posthog_distinct_id = _required_string(payload, "posthog_distinct_id")
 
     missing_fields = [
@@ -853,6 +854,7 @@ def submit_stage_1_crm_lead():
         for field, value in (
             ("name", name),
             ("phone_number", phone_number),
+            ("email", email),
             ("posthog_distinct_id", posthog_distinct_id),
         )
         if not value
@@ -866,6 +868,7 @@ def submit_stage_1_crm_lead():
         crm_result = get_or_create_attio_stage_1_lead(
             name=name,
             phone_number=phone_number,
+            email=email,
             posthog_distinct_id=posthog_distinct_id,
         )
     except Exception as exc:
@@ -1917,7 +1920,6 @@ def submit_contact_details():
         or _required_string(payload, "crm_person_record_id")
         or _required_string(payload, "crm_record_id")
     )
-    email = _required_string(payload, "email")
     address_line_1 = _required_string(payload, "address_line_1")
     address_line_2 = _required_string(payload, "address_line_2")
     city = _required_string(payload, "city")
@@ -1932,12 +1934,12 @@ def submit_contact_details():
     if not person_record_id:
         return jsonify({"error": "missing_required_fields", "fields": ["attio_id"]}), 400
 
-    if not email and not any([address_line_1, address_line_2, city, postcode, country]):
+    if not any([address_line_1, address_line_2, city, postcode, country]):
         return (
             jsonify(
                 {
                     "error": "missing_required_fields",
-                    "fields": ["email_or_address"],
+                    "fields": ["address"],
                 }
             ),
             400,
@@ -1948,7 +1950,6 @@ def submit_contact_details():
 
         update_attio_person_contact_details(
             person_record_id=person_record_id,
-            email=email,
             address_line_1=address_line_1,
             address_line_2=address_line_2,
             city=city,
@@ -1964,7 +1965,6 @@ def submit_contact_details():
     valuations = query.all()
 
     for valuation in valuations:
-        valuation.customer_email = email or valuation.customer_email
         valuation.address_line_1 = address_line_1 or valuation.address_line_1
         valuation.address_line_2 = address_line_2 or valuation.address_line_2
         valuation.city = city or valuation.city
@@ -1989,33 +1989,10 @@ def submit_contact_details():
 
     db.session.commit()
 
-    klaviyo_sync = {"status": "skipped", "reason": "missing_email"}
-    if email:
-        try:
-            from klaviyo import upsert_profile_from_attio_contact
-
-            klaviyo_sync = upsert_profile_from_attio_contact(
-                email=email,
-                attio_person_record_id=person_record_id,
-                properties={
-                    "rootle_stage": "address_available",
-                    "crm_person_record_id": person_record_id,
-                    "crm_valuation_request_ids": [
-                        item.crm_valuation_request_id
-                        for item in valuations
-                        if item.crm_valuation_request_id
-                    ],
-                    "erp_valuation_request_ids": [item.id for item in valuations],
-                },
-            )
-        except Exception as exc:
-            klaviyo_sync = {"status": "failed", "message": str(exc)}
-
     return jsonify(
         {
             "attio_id": person_record_id,
             "crm_person_record_id": person_record_id,
-            "klaviyo_sync": klaviyo_sync,
             "updated_erp_valuations": [_valuation_to_dict(item) for item in valuations],
         }
     )

@@ -206,10 +206,16 @@ OPENAPI_SPEC = {
                         "application/json": {
                             "schema": {
                                 "type": "object",
-                                "required": ["name", "phone_number", "posthog_distinct_id"],
+                                "required": [
+                                    "name",
+                                    "phone_number",
+                                    "email",
+                                    "posthog_distinct_id",
+                                ],
                                 "properties": {
                                     "name": {"type": "string"},
                                     "phone_number": {"type": "string"},
+                                    "email": {"type": "string"},
                                     "posthog_distinct_id": {"type": "string"},
                                 },
                             }
@@ -767,7 +773,7 @@ OPENAPI_SPEC = {
         "/api/crm/contact-details": {
             "post": {
                 "summary": "Capture customer contact details",
-                "description": "Updates Attio Person details and matching ERP valuation cases.",
+                "description": "Updates Attio Person address details and matching ERP valuation cases.",
                 "requestBody": {
                     "required": True,
                     "content": {
@@ -781,7 +787,6 @@ OPENAPI_SPEC = {
                                     "crm_record_id": {"type": "string"},
                                     "attio_valuation_request_id": {"type": "string"},
                                     "crm_valuation_request_id": {"type": "string"},
-                                    "email": {"type": "string"},
                                     "address_line_1": {"type": "string"},
                                     "address_line_2": {"type": "string"},
                                     "city": {"type": "string"},
@@ -1044,10 +1049,11 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/leads/stage-1</code></h3>
-          <p class="meta">Capture name, phone number, and PostHog ID in Attio. Does not create an ERP lead.</p>
+          <p class="meta">Capture name, phone number, email, and PostHog ID in Attio. Does not create an ERP lead.</p>
           <pre>{
   "name": "Jane Smith",
   "phone_number": "+447123456789",
+  "email": "jane@example.com",
   "posthog_distinct_id": "0192..."
 }</pre>
         </div>
@@ -1212,10 +1218,9 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/contact-details</code></h3>
-          <p class="meta">Update the Attio Person and matching ERP valuation cases with email and address details.</p>
+          <p class="meta">Update the Attio Person and matching ERP valuation cases with address details.</p>
           <pre>{
   "attio_id": "person-record-id",
-  "email": "jane@example.com",
   "address_line_1": "1 Street",
   "city": "London",
   "postcode": "SW1A 1AA",
