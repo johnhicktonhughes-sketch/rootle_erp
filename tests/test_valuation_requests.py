@@ -995,12 +995,17 @@ class ValuationRequestTests(unittest.TestCase):
         needs_mev_data = needs_mev_response.get_json()
         self.assertEqual(needs_mev_data["total"], 1)
         self.assertEqual(needs_mev_data["valuations"][0]["id"], second_id)
+        self.assertIn("label_eligibility", needs_mev_data["valuations"][0])
+        self.assertNotIn("mev_calculations", needs_mev_data["valuations"][0])
+        self.assertNotIn("inbound_labels", needs_mev_data["valuations"][0])
+        self.assertNotIn("postage_opportunities", needs_mev_data["valuations"][0])
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(
             detail_response.get_json()["valuation"]["rootle_request_id"],
             "request_queue_2",
         )
+        self.assertIn("mev_calculations", detail_response.get_json()["valuation"])
 
     def test_mev_sync_retries_latest_snapshot_to_attio(self):
         attio_mev_updates = []

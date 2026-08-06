@@ -187,6 +187,50 @@ class LeadValuation(db.Model, TimestampMixin):
     contact_details_received_at = db.Column(db.DateTime)
     stage_3_completed_at = db.Column(db.DateTime)
     meta = db.Column(db.JSON)
+    __table_args__ = (
+        db.Index(
+            "ix_valuation_requests_created_at_id",
+            "created_at",
+            "id",
+        ),
+        db.Index(
+            "ix_valuation_requests_pricing_status_created_at_id",
+            "pricing_status",
+            "created_at",
+            "id",
+        ),
+        db.Index(
+            "ix_valuation_requests_person_created_at_id",
+            "crm_person_record_id",
+            "created_at",
+            "id",
+        ),
+        db.Index(
+            "ix_valuation_requests_status_created_at_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        db.Index(
+            "ix_valuation_requests_current_stage_created_at_id",
+            "current_stage",
+            "created_at",
+            "id",
+        ),
+        db.Index(
+            "ix_valuation_requests_needs_mev_created_at_id",
+            "created_at",
+            "id",
+            postgresql_where=db.text("latest_mev_amount IS NULL"),
+        ),
+        db.Index(
+            "ix_valuation_requests_needs_mev_person_created_id",
+            "crm_person_record_id",
+            "created_at",
+            "id",
+            postgresql_where=db.text("latest_mev_amount IS NULL"),
+        ),
+    )
 
     mev_calculations = db.relationship(
         "LeadValuationMevCalculation",

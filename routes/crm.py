@@ -102,6 +102,12 @@ def _valuation_to_dict(valuation):
     return data
 
 
+def _valuation_summary_to_dict(valuation):
+    data = valuation.to_dict()
+    data["label_eligibility"] = _label_eligibility_for_valuation(valuation)
+    return data
+
+
 def _failed_valuation_request_submission_to_dict(submission):
     return submission.to_dict()
 
@@ -1131,7 +1137,9 @@ def list_valuation_requests():
 
     return jsonify(
         {
-            "valuations": [_valuation_to_dict(valuation) for valuation in valuations],
+            "valuations": [
+                _valuation_summary_to_dict(valuation) for valuation in valuations
+            ],
             "total": total,
             "limit": limit,
             "offset": offset,
