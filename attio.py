@@ -1,5 +1,6 @@
 import os
 import base64
+from functools import lru_cache
 from io import BytesIO
 from datetime import datetime
 from pathlib import Path
@@ -38,11 +39,11 @@ ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG = os.getenv(
     "ATTIO_POSTAGE_OPPORTUNITY_OBJECT_SLUG",
     "postage_opportunity",
 )
-ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
+ROOTLE_STAGE_CONTACT_DETAILS = "contact_details"
 ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
 ROOTLE_STAGE_ADDRESS_AVAILABLE = "address_available"
 ROOTLE_STAGE_OPTIONS = (
-    ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+    ROOTLE_STAGE_CONTACT_DETAILS,
     ROOTLE_STAGE_ITEM_DETAILS_AVAILABLE,
     ROOTLE_STAGE_ADDRESS_AVAILABLE,
 )
@@ -494,6 +495,15 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _sync_schema_on_write() -> bool:
+    return os.getenv("ATTIO_SYNC_SCHEMA_ON_WRITE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+
+
 def _attio_url(path: str) -> str:
     return f"{ATTIO_API_BASE_URL.rstrip('/')}/{path.lstrip('/')}"
 
@@ -638,8 +648,8 @@ def _stage_1_values(
             }
         ],
         "phone_numbers": [{"original_phone_number": phone_number.strip()}],
-        "description": f"Rootle website lead\nStage: {ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE}",
-        ATTIO_STAGE_ATTRIBUTE_SLUG: ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+        "description": f"Rootle website lead\nStage: {ROOTLE_STAGE_CONTACT_DETAILS}",
+        ATTIO_STAGE_ATTRIBUTE_SLUG: ROOTLE_STAGE_CONTACT_DETAILS,
         "rootle_posthog_distinct_id": posthog_distinct_id.strip(),
     }
     if email:
@@ -1016,19 +1026,27 @@ def _create_object_attribute(object_slug: str, attribute: dict) -> dict:
     return response.json()["data"]
 
 
+@lru_cache(maxsize=256)
+def _ensure_select_option(object_slug: str, attribute_slug: str, option: str) -> None:
+    response = _attio_request(
+        "POST",
+        f"objects/{object_slug}/attributes/{attribute_slug}/options",
+        json={"data": {"title": option}},
+    )
+    if response.status_code == 409:
+        return
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+
 def _ensure_select_options(object_slug: str, attribute_slug: str, options: tuple[str, ...]) -> None:
     for option in options:
-        response = _attio_request(
-            "POST",
-            f"objects/{object_slug}/attributes/{attribute_slug}/options",
-            json={"data": {"title": option}},
-        )
-        if response.status_code == 409:
-            continue
-        if not response.ok:
-            raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+        option = str(option).strip()
+        if option:
+            _ensure_select_option(object_slug, attribute_slug, option)
 
 
+@lru_cache(maxsize=1)
 def ensure_marketing_attribution_attributes() -> list[dict]:
     attributes = _list_attio_attributes()
     existing_by_slug = {attribute.get("api_slug"): attribute for attribute in attributes}
@@ -1045,6 +1063,7 @@ def ensure_marketing_attribution_attributes() -> list[dict]:
     return ensured
 
 
+@lru_cache(maxsize=1)
 def ensure_person_contact_attributes() -> list[dict]:
     attributes = _list_attio_attributes()
     existing_by_slug = {attribute.get("api_slug"): attribute for attribute in attributes}
@@ -1061,6 +1080,7 @@ def ensure_person_contact_attributes() -> list[dict]:
     return ensured
 
 
+@lru_cache(maxsize=1)
 def ensure_valuation_request_object() -> dict:
     valuation_request_object = _create_attio_object(
         ATTIO_VALUATION_REQUEST_OBJECT_SLUG,
@@ -1199,6 +1219,7 @@ def ensure_valuation_request_item_options(item_categories: list[str]) -> None:
     )
 
 
+@lru_cache(maxsize=1)
 def ensure_stage_attribute() -> dict:
     attributes = _list_attio_attributes()
     attribute = next(
@@ -1329,7 +1350,7 @@ def get_or_create_attio_stage_1_lead(
     if existing_record_id:
         update_attio_person_rootle_stage(
             person_record_id=existing_record_id,
-            rootle_stage=ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+            rootle_stage=ROOTLE_STAGE_CONTACT_DETAILS,
         )
         update_attio_person_posthog_distinct_id(
             person_record_id=existing_record_id,
@@ -1385,7 +1406,8 @@ def create_attio_valuation_request(
     valuation_guide_url: str | None = None,
     source: str | None = None,
 ) -> str:
-    ensure_valuation_request_item_options(item_categories)
+    if _sync_schema_on_write():
+        ensure_valuation_request_item_options(item_categories)
     payload = {
         "data": {
             "values": _valuation_request_values(
@@ -1436,7 +1458,8 @@ def update_attio_valuation_request(
     if not valuation_request_id:
         return valuation_request_id
 
-    ensure_valuation_request_item_options(item_categories)
+    if _sync_schema_on_write():
+        ensure_valuation_request_item_options(item_categories)
     payload = {
         "data": {
             "values": _valuation_request_values(
@@ -1715,7 +1738,8 @@ def update_attio_person_posthog_distinct_id(
     if not posthog_distinct_id or not str(posthog_distinct_id).strip():
         return person_record_id
 
-    ensure_marketing_attribution_attributes()
+    if _sync_schema_on_write():
+        ensure_marketing_attribution_attributes()
     payload = {
         "data": {
             "values": {

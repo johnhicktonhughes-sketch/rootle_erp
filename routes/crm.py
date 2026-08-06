@@ -33,7 +33,7 @@ LABEL_MEV_THRESHOLD = Decimal("100.00")
 WHITE_GLOVE_MEV_THRESHOLD = Decimal("10000.00")
 LABEL_TERMINAL_STATUSES = {"cancelled", "expired", "received"}
 RESET_CONFIRMATION = "DELETE ROOTLE ERP DATA"
-ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE = "phone_number_available"
+ROOTLE_STAGE_CONTACT_DETAILS = "contact_details"
 REQUESTED_MEV_CALCULATION_STATUS = "requested_mev_calculation"
 PRICING_API_CALCULATION_METHOD = "rootle_pricing_api"
 
@@ -86,6 +86,15 @@ def _string_list(payload, *keys):
         return items or None
 
     return None
+
+
+def _split_customer_name(name):
+    parts = str(name or "").strip().split()
+    if not parts:
+        return None, None
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], " ".join(parts[1:])
 
 
 def _valuation_to_dict(valuation):
@@ -880,13 +889,35 @@ def submit_stage_1_crm_lead():
     except Exception as exc:
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
+    first_name, last_name = _split_customer_name(name)
+    try:
+        from klaviyo import upsert_profile_from_attio_contact
+
+        klaviyo_sync = upsert_profile_from_attio_contact(
+            email=email,
+            attio_person_record_id=crm_result["record_id"],
+            phone_number=phone_number,
+            first_name=first_name,
+            last_name=last_name,
+            properties={
+                "rootle_stage": ROOTLE_STAGE_CONTACT_DETAILS,
+                "posthog_distinct_id": posthog_distinct_id,
+            },
+        )
+    except Exception as exc:
+        klaviyo_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
+
     status_code = 201 if crm_result["created"] else 200
     return jsonify(
         {
             "crm_system": "attio",
             "attio_id": crm_result["record_id"],
             "crm_record_id": crm_result["record_id"],
-            "stage": ROOTLE_STAGE_PHONE_NUMBER_AVAILABLE,
+            "stage": ROOTLE_STAGE_CONTACT_DETAILS,
+            "klaviyo_sync": klaviyo_sync,
             "erp_lead_created": False,
             "attio_record_created": crm_result["created"],
         }

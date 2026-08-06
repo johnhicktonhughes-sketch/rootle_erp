@@ -79,7 +79,8 @@ The current website form model is event-based rather than stage-order dependent.
   - Endpoint: `POST /api/crm/leads/stage-1`
   - Payload: `name`, `phone_number`, `posthog_distinct_id`
   - Finds or creates an Attio Person by phone number
-  - Sets Attio Person `rootle_stage` to `phone_number_available`
+  - Sets Attio Person `rootle_stage` to `contact_details`
+  - Upserts the lead profile to Klaviyo when email is available
   - Does not create an ERP valuation case
 - Item submitted:
   - Endpoint: `POST /api/crm/valuation-requests`
@@ -103,7 +104,7 @@ The current website form model is event-based rather than stage-order dependent.
   - Updates matching ERP valuation request cases when they exist
   - Sets Attio `valuation_requests.rootle_stage` to `address_available`
 
-The UI labels may still say stage 1, stage 2, and stage 3, but Attio stores descriptive `rootle_stage` values: `phone_number_available`, `item_details_available`, and `address_available`.
+The UI labels may still say stage 1, stage 2, and stage 3, but Attio stores descriptive `rootle_stage` values: `contact_details`, `item_details_available`, and `address_available`.
 
 ## MEV and margin calculations
 

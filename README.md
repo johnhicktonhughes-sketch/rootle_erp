@@ -81,7 +81,10 @@ The response includes the Attio record id and confirms that no ERP lead was crea
   "crm_system": "attio",
   "attio_id": "record-id",
   "crm_record_id": "record-id",
-  "stage": "phone_number_available",
+  "stage": "contact_details",
+  "klaviyo_sync": {
+    "status": "success"
+  },
   "erp_lead_created": false,
   "attio_record_created": false
 }

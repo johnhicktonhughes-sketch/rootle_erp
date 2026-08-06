@@ -312,7 +312,7 @@ class ValuationRequestTests(unittest.TestCase):
                 email="customer@example.com",
                 posthog_distinct_id="ph_123",
             )["rootle_stage"],
-            "phone_number_available",
+            "contact_details",
         )
         self.assertEqual(
             _stage_1_values(
@@ -434,7 +434,7 @@ class ValuationRequestTests(unittest.TestCase):
                 "stage",
                 {
                     "person_record_id": "person_existing",
-                    "rootle_stage": "phone_number_available",
+                    "rootle_stage": "contact_details",
                 },
             ),
         )
@@ -462,6 +462,52 @@ class ValuationRequestTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["fields"], ["email"])
+
+    def test_stage_1_syncs_klaviyo_profile_with_contact_details_stage(self):
+        klaviyo_calls = []
+
+        attio = types.SimpleNamespace(
+            get_or_create_attio_stage_1_lead=lambda **kwargs: {
+                "record_id": "person_stage_1",
+                "created": True,
+            },
+        )
+        klaviyo = types.SimpleNamespace(
+            upsert_profile_from_attio_contact=lambda **kwargs: klaviyo_calls.append(
+                kwargs
+            )
+            or {"status": "success", "integration_log_id": 42}
+        )
+
+        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
+            response = self.client.post(
+                "/api/crm/leads/stage-1",
+                json={
+                    "name": "Jane Smith",
+                    "phone_number": "+447123456789",
+                    "email": "jane@example.com",
+                    "posthog_distinct_id": "ph_stage_1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertEqual(data["stage"], "contact_details")
+        self.assertEqual(data["klaviyo_sync"]["status"], "success")
+        self.assertEqual(
+            klaviyo_calls[0],
+            {
+                "email": "jane@example.com",
+                "attio_person_record_id": "person_stage_1",
+                "phone_number": "+447123456789",
+                "first_name": "Jane",
+                "last_name": "Smith",
+                "properties": {
+                    "rootle_stage": "contact_details",
+                    "posthog_distinct_id": "ph_stage_1",
+                },
+            },
+        )
 
     def test_add_valuation_item_syncs_attio_option(self):
         synced_options = []
@@ -500,6 +546,94 @@ class ValuationRequestTests(unittest.TestCase):
         list_response = self.client.get("/api/crm/valuation-items")
         item_names = [item["name"] for item in list_response.get_json()]
         self.assertNotIn("watches", item_names)
+
+    def test_attio_valuation_create_skips_schema_setup_by_default(self):
+        import attio
+
+        schema_calls = []
+        record_posts = []
+
+        class FakeResponse:
+            ok = True
+            status_code = 200
+            text = "{}"
+
+            def json(self):
+                return {"data": {"id": {"record_id": "vr_fast"}}}
+
+        def fake_attio_request(method, path, **kwargs):
+            schema_calls.append((method, path))
+            return FakeResponse()
+
+        def fake_post(url, json, headers, timeout):
+            record_posts.append(json)
+            return FakeResponse()
+
+        with patch.dict(os.environ, {"ATTIO_SYNC_SCHEMA_ON_WRITE": ""}), patch(
+            "attio._attio_request",
+            fake_attio_request,
+        ), patch("attio.requests.post", fake_post), patch("attio._headers", lambda: {}):
+            record_id = attio.create_attio_valuation_request(
+                person_record_id="person_fast",
+                rootle_request_id="request_fast",
+                item_categories=["gold"],
+                item_photo_url="https://example.com/gold.jpg",
+            )
+
+        self.assertEqual(record_id, "vr_fast")
+        self.assertEqual(len(record_posts), 1)
+        self.assertEqual(schema_calls, [])
+
+    def test_attio_valuation_create_caches_schema_setup_when_enabled(self):
+        import attio
+
+        attio.ensure_valuation_request_object.cache_clear()
+        attio._ensure_select_option.cache_clear()
+        schema_calls = []
+        record_posts = []
+
+        class FakeResponse:
+            ok = True
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, record_id=None):
+                self.record_id = record_id
+
+            def json(self):
+                return {"data": {"id": {"record_id": self.record_id or "schema_id"}}}
+
+        def fake_attio_request(method, path, **kwargs):
+            schema_calls.append((method, path))
+            return FakeResponse()
+
+        def fake_post(url, json, headers, timeout):
+            record_posts.append(json)
+            return FakeResponse(record_id=f"vr_{len(record_posts)}")
+
+        with patch.dict(os.environ, {"ATTIO_SYNC_SCHEMA_ON_WRITE": "true"}), patch(
+            "attio._attio_request",
+            fake_attio_request,
+        ), patch("attio.requests.post", fake_post), patch("attio._headers", lambda: {}):
+            first_record_id = attio.create_attio_valuation_request(
+                person_record_id="person_cache",
+                rootle_request_id="request_cache_1",
+                item_categories=["gold"],
+                item_photo_url="https://example.com/gold.jpg",
+            )
+            schema_call_count = len(schema_calls)
+            second_record_id = attio.create_attio_valuation_request(
+                person_record_id="person_cache",
+                rootle_request_id="request_cache_2",
+                item_categories=["gold"],
+                item_photo_url="https://example.com/gold.jpg",
+            )
+
+        self.assertEqual(first_record_id, "vr_1")
+        self.assertEqual(second_record_id, "vr_2")
+        self.assertEqual(len(record_posts), 2)
+        self.assertGreater(schema_call_count, 0)
+        self.assertEqual(len(schema_calls), schema_call_count)
 
     def test_attio_record_deleted_webhook_deletes_matching_valuation(self):
         attio = types.SimpleNamespace(
