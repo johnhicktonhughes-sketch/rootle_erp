@@ -124,15 +124,43 @@ def _profile_id_from_response(response: requests.Response) -> str | None:
         return None
 
 
-def _list_ids_for_marketing_consent(marketing_consent: bool | None) -> list[str]:
-    list_ids = [KLAVIYO_ROOTLE_CONTACT_LIST_ID]
-    if marketing_consent is True:
-        list_ids.insert(0, KLAVIYO_MARKETING_CONSENT_LIST_ID)
-    return list_ids
-
-
 def _list_relationship_payload(profile_id: str) -> dict:
     return {"data": [{"type": "profile", "id": profile_id}]}
+
+
+def _email_subscription_payload(*, email: str, list_id: str) -> dict:
+    return {
+        "data": {
+            "type": "profile-subscription-bulk-create-job",
+            "attributes": {
+                "profiles": {
+                    "data": [
+                        {
+                            "type": "profile",
+                            "attributes": {
+                                "email": email,
+                                "subscriptions": {
+                                    "email": {
+                                        "marketing": {
+                                            "consent": "SUBSCRIBED",
+                                        }
+                                    }
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            "relationships": {
+                "list": {
+                    "data": {
+                        "type": "list",
+                        "id": list_id,
+                    }
+                }
+            },
+        }
+    }
 
 
 def add_profile_to_list(
@@ -152,6 +180,39 @@ def add_profile_to_list(
         entity_type="list_membership",
         external_id=external_id or profile_id,
         payload={"list_id": list_id, **payload},
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "list_id": list_id,
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+    }
+
+
+def subscribe_profile_to_email_marketing(
+    *,
+    email: str,
+    list_id: str,
+    external_id: str | None = None,
+) -> dict:
+    payload = _email_subscription_payload(email=email, list_id=list_id)
+    response = requests.post(
+        f"{_base_url()}/api/profile-subscription-bulk-create-jobs",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="email_subscription",
+        external_id=external_id or email,
+        payload=payload,
         response=response,
     )
 
@@ -267,14 +328,23 @@ def upsert_profile_from_attio_contact(
     if not profile_id:
         raise KlaviyoError("Klaviyo profile import did not return a profile id.")
 
-    marketing_consent = (properties or {}).get("marketing_consent")
+    consent_sync = []
+    if (properties or {}).get("marketing_consent") is True:
+        consent_sync.append(
+            subscribe_profile_to_email_marketing(
+                email=email,
+                list_id=KLAVIYO_MARKETING_CONSENT_LIST_ID,
+                external_id=attio_person_record_id,
+            )
+        )
+
     list_sync = [
         add_profile_to_list(
             profile_id=profile_id,
             list_id=list_id,
             external_id=attio_person_record_id,
         )
-        for list_id in _list_ids_for_marketing_consent(marketing_consent)
+        for list_id in [KLAVIYO_ROOTLE_CONTACT_LIST_ID]
     ]
 
     return {
@@ -282,5 +352,6 @@ def upsert_profile_from_attio_contact(
         "integration_log_id": log.id,
         "response_status": response.status_code,
         "profile_id": profile_id,
+        "consent_sync": consent_sync,
         "list_sync": list_sync,
     }

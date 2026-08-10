@@ -310,7 +310,7 @@ class ValuationRequestTests(unittest.TestCase):
             "indicative_offer_completed",
         )
 
-    def test_klaviyo_adds_consented_profile_to_marketing_and_contact_lists(self):
+    def test_klaviyo_subscribes_consented_profile_and_adds_contact_list(self):
         from klaviyo import upsert_profile_from_attio_contact
 
         calls = []
@@ -331,6 +331,8 @@ class ValuationRequestTests(unittest.TestCase):
             calls.append({"url": url, "json": json})
             if url.endswith("/api/profile-import"):
                 return FakeResponse(profile_id="profile_123", status_code=201)
+            if url.endswith("/api/profile-subscription-bulk-create-jobs"):
+                return FakeResponse(status_code=202)
             return FakeResponse(status_code=204)
 
         with patch("klaviyo._api_key", lambda: "test-key"), patch(
@@ -344,18 +346,32 @@ class ValuationRequestTests(unittest.TestCase):
 
         self.assertEqual(result["profile_id"], "profile_123")
         self.assertEqual(
+            [sync["list_id"] for sync in result["consent_sync"]],
+            ["Ub3nHY"],
+        )
+        self.assertEqual(
             [sync["list_id"] for sync in result["list_sync"]],
-            ["Ub3nHY", "RWb2ew"],
+            ["RWb2ew"],
         )
         self.assertEqual(
             [call["url"] for call in calls[1:]],
             [
-                "https://klaviyo.example.test/api/lists/Ub3nHY/relationships/profiles",
+                "https://klaviyo.example.test/api/profile-subscription-bulk-create-jobs",
                 "https://klaviyo.example.test/api/lists/RWb2ew/relationships/profiles",
             ],
         )
         self.assertEqual(
-            calls[1]["json"],
+            calls[1]["json"]["data"]["relationships"]["list"]["data"],
+            {"type": "list", "id": "Ub3nHY"},
+        )
+        subscribed_profile = calls[1]["json"]["data"]["attributes"]["profiles"]["data"][0]
+        self.assertEqual(subscribed_profile["attributes"]["email"], "customer@example.com")
+        self.assertEqual(
+            subscribed_profile["attributes"]["subscriptions"]["email"]["marketing"],
+            {"consent": "SUBSCRIBED"},
+        )
+        self.assertEqual(
+            calls[2]["json"],
             {"data": [{"type": "profile", "id": "profile_123"}]},
         )
 
@@ -391,6 +407,10 @@ class ValuationRequestTests(unittest.TestCase):
                 properties={"marketing_consent": False},
             )
 
+        self.assertEqual(
+            result["consent_sync"],
+            [],
+        )
         self.assertEqual(
             [sync["list_id"] for sync in result["list_sync"]],
             ["RWb2ew"],
