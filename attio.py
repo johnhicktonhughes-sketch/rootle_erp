@@ -461,6 +461,12 @@ ROOTLE_PERSON_CONTACT_ATTRIBUTES = (
         "api_slug": "rootle_country",
         "description": "Country captured in Rootle stage 3.",
     },
+    {
+        "title": "Rootle Marketing Consent",
+        "api_slug": "rootle_marketing_consent",
+        "description": "Marketing consent captured in Rootle form submissions.",
+        "type": "checkbox",
+    },
 )
 MARKETING_META_TO_ATTIO = {
     "lead_source": "rootle_lead_source",
@@ -637,6 +643,7 @@ def _stage_1_values(
     phone_number: str,
     email: str | None = None,
     posthog_distinct_id: str,
+    marketing_consent: bool | None = None,
 ) -> dict:
     first_name, last_name = _split_name(name)
     values = {
@@ -654,6 +661,8 @@ def _stage_1_values(
     }
     if email:
         values["email_addresses"] = [email.strip()]
+    if marketing_consent is not None:
+        values["rootle_marketing_consent"] = marketing_consent
     return values
 
 
@@ -755,10 +764,13 @@ def _person_contact_values(
     city: str | None = None,
     postcode: str | None = None,
     country: str | None = None,
+    marketing_consent: bool | None = None,
 ) -> dict:
     values = {}
     if email:
         values["email_addresses"] = [email]
+    if marketing_consent is not None:
+        values["rootle_marketing_consent"] = marketing_consent
 
     optional_values = {
         "rootle_address_line_1": address_line_1,
@@ -991,6 +1003,28 @@ def _create_text_attribute(attribute: dict) -> dict:
     return response.json()["data"]
 
 
+def _create_person_attribute(attribute: dict) -> dict:
+    response = _attio_request(
+        "POST",
+        f"objects/{ATTIO_OBJECT_SLUG}/attributes",
+        json={
+            "data": {
+                "title": attribute["title"],
+                "description": attribute["description"],
+                "api_slug": attribute["api_slug"],
+                "type": attribute.get("type", "text"),
+                "is_required": False,
+                "is_unique": False,
+                "is_multiselect": False,
+                "config": attribute.get("config", {}),
+            }
+        },
+    )
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+    return response.json()["data"]
+
+
 def _create_object_attribute(object_slug: str, attribute: dict) -> dict:
     response = _attio_request(
         "POST",
@@ -1058,7 +1092,7 @@ def ensure_marketing_attribution_attributes() -> list[dict]:
             ensured.append(existing)
             continue
 
-        ensured.append(_create_text_attribute(attribute))
+        ensured.append(_create_person_attribute(attribute))
 
     return ensured
 
@@ -1308,9 +1342,11 @@ def create_attio_stage_1_lead(
     phone_number: str,
     email: str | None = None,
     posthog_distinct_id: str,
+    marketing_consent: bool | None = None,
 ) -> str:
     ensure_stage_attribute()
     ensure_marketing_attribution_attributes()
+    ensure_person_contact_attributes()
 
     payload = {
         "data": {
@@ -1319,6 +1355,7 @@ def create_attio_stage_1_lead(
                 phone_number=phone_number,
                 email=email,
                 posthog_distinct_id=posthog_distinct_id,
+                marketing_consent=marketing_consent,
             )
         }
     }
@@ -1345,6 +1382,7 @@ def get_or_create_attio_stage_1_lead(
     phone_number: str,
     email: str | None = None,
     posthog_distinct_id: str,
+    marketing_consent: bool | None = None,
 ) -> dict:
     existing_record_id = find_attio_person_by_phone(phone_number)
     if existing_record_id:
@@ -1357,9 +1395,19 @@ def get_or_create_attio_stage_1_lead(
             posthog_distinct_id=posthog_distinct_id,
         )
         if email:
+            contact_values = {
+                "person_record_id": existing_record_id,
+                "email": email,
+            }
+            if marketing_consent is not None:
+                contact_values["marketing_consent"] = marketing_consent
+            update_attio_person_contact_details(
+                **contact_values,
+            )
+        elif marketing_consent is not None:
             update_attio_person_contact_details(
                 person_record_id=existing_record_id,
-                email=email,
+                marketing_consent=marketing_consent,
             )
         return {"record_id": existing_record_id, "created": False}
 
@@ -1368,6 +1416,7 @@ def get_or_create_attio_stage_1_lead(
         phone_number=phone_number,
         email=email,
         posthog_distinct_id=posthog_distinct_id,
+        marketing_consent=marketing_consent,
     )
     return {"record_id": record_id, "created": True}
 
@@ -1667,6 +1716,7 @@ def update_attio_person_contact_details(
     city: str | None = None,
     postcode: str | None = None,
     country: str | None = None,
+    marketing_consent: bool | None = None,
 ) -> str:
     ensure_person_contact_attributes()
     values = _person_contact_values(
@@ -1676,6 +1726,7 @@ def update_attio_person_contact_details(
         city=city,
         postcode=postcode,
         country=country,
+        marketing_consent=marketing_consent,
     )
     if not values:
         return person_record_id

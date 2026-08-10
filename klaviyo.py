@@ -12,6 +12,13 @@ class KlaviyoError(RuntimeError):
     pass
 
 
+KLAVIYO_MARKETING_CONSENT_LIST_ID = "Ub3nHY"
+KLAVIYO_ROOTLE_CONTACT_LIST_ID = "RWb2ew"
+KLAVIYO_STAGE_PROPERTY = "rootle_stage"
+KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED = "indicative_offer_started"
+KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED = "indicative_offer_completed"
+
+
 def _config_value(key: str, default: str | None = None) -> str | None:
     if has_app_context():
         return current_app.config.get(key, default)
@@ -81,7 +88,7 @@ def _record_klaviyo_result(
 
 def _profile_payload(
     *,
-    email: str,
+    email: str | None = None,
     attio_person_record_id: str,
     phone_number: str | None = None,
     first_name: str | None = None,
@@ -89,7 +96,6 @@ def _profile_payload(
     properties: dict | None = None,
 ) -> dict:
     attributes = {
-        "email": email,
         "external_id": attio_person_record_id,
         "properties": {
             "attio_person_record_id": attio_person_record_id,
@@ -99,6 +105,7 @@ def _profile_payload(
     }
 
     optional_attributes = {
+        "email": email,
         "phone_number": phone_number,
         "first_name": first_name,
         "last_name": last_name,
@@ -108,6 +115,103 @@ def _profile_payload(
     )
 
     return {"data": {"type": "profile", "attributes": attributes}}
+
+
+def _profile_id_from_response(response: requests.Response) -> str | None:
+    try:
+        return response.json().get("data", {}).get("id")
+    except ValueError:
+        return None
+
+
+def _list_ids_for_marketing_consent(marketing_consent: bool | None) -> list[str]:
+    list_ids = [KLAVIYO_ROOTLE_CONTACT_LIST_ID]
+    if marketing_consent is True:
+        list_ids.insert(0, KLAVIYO_MARKETING_CONSENT_LIST_ID)
+    return list_ids
+
+
+def _list_relationship_payload(profile_id: str) -> dict:
+    return {"data": [{"type": "profile", "id": profile_id}]}
+
+
+def add_profile_to_list(
+    *,
+    profile_id: str,
+    list_id: str,
+    external_id: str | None = None,
+) -> dict:
+    payload = _list_relationship_payload(profile_id)
+    response = requests.post(
+        f"{_base_url()}/api/lists/{list_id}/relationships/profiles",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="list_membership",
+        external_id=external_id or profile_id,
+        payload={"list_id": list_id, **payload},
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "list_id": list_id,
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+    }
+
+
+def upsert_profile_properties_by_attio_person(
+    *,
+    attio_person_record_id: str,
+    properties: dict,
+) -> dict:
+    payload = _profile_payload(
+        attio_person_record_id=attio_person_record_id,
+        properties=properties,
+    )
+
+    if not _api_key():
+        _record_klaviyo_result(
+            entity_type="profile",
+            external_id=attio_person_record_id,
+            payload=payload,
+            status="skipped",
+            message="KLAVIYO_API_KEY is not configured.",
+        )
+        return {"status": "skipped", "reason": "missing_api_key"}
+
+    response = requests.post(
+        f"{_base_url()}/api/profile-import",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="profile",
+        external_id=attio_person_record_id,
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+        "profile_id": _profile_id_from_response(response),
+    }
 
 
 def upsert_profile_from_attio_contact(
@@ -159,8 +263,24 @@ def upsert_profile_from_attio_contact(
             f"Klaviyo API returned {response.status_code}: {response.text}"
         )
 
+    profile_id = _profile_id_from_response(response)
+    if not profile_id:
+        raise KlaviyoError("Klaviyo profile import did not return a profile id.")
+
+    marketing_consent = (properties or {}).get("marketing_consent")
+    list_sync = [
+        add_profile_to_list(
+            profile_id=profile_id,
+            list_id=list_id,
+            external_id=attio_person_record_id,
+        )
+        for list_id in _list_ids_for_marketing_consent(marketing_consent)
+    ]
+
     return {
         "status": "success",
         "integration_log_id": log.id,
         "response_status": response.status_code,
+        "profile_id": profile_id,
+        "list_sync": list_sync,
     }

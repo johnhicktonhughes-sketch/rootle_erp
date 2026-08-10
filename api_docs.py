@@ -217,6 +217,7 @@ OPENAPI_SPEC = {
                                     "phone_number": {"type": "string"},
                                     "email": {"type": "string"},
                                     "posthog_distinct_id": {"type": "string"},
+                                    "marketing_consent": {"type": "boolean"},
                                 },
                             }
                         }
@@ -792,6 +793,7 @@ OPENAPI_SPEC = {
                                     "city": {"type": "string"},
                                     "postcode": {"type": "string"},
                                     "country": {"type": "string"},
+                                    "marketing_consent": {"type": "boolean"},
                                 },
                             }
                         }
@@ -1049,12 +1051,13 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/leads/stage-1</code></h3>
-          <p class="meta">Capture name, phone number, email, and PostHog ID in Attio. Does not create an ERP lead.</p>
+          <p class="meta">Capture name, phone number, email, PostHog ID, and marketing consent in Attio. Does not create an ERP lead.</p>
           <pre>{
   "name": "Jane Smith",
   "phone_number": "+447123456789",
   "email": "jane@example.com",
-  "posthog_distinct_id": "0192..."
+  "posthog_distinct_id": "0192...",
+  "marketing_consent": true
 }</pre>
         </div>
       </article>
@@ -1224,7 +1227,8 @@ DOCS_HTML = """<!doctype html>
   "address_line_1": "1 Street",
   "city": "London",
   "postcode": "SW1A 1AA",
-  "country": "GB"
+  "country": "GB",
+  "marketing_consent": true
 }</pre>
         </div>
       </article>

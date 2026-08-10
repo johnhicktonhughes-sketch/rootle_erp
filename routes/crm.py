@@ -258,6 +258,17 @@ def _bool_value(payload, key):
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
+def _optional_bool_value(payload, key):
+    if key not in payload or payload.get(key) is None:
+        return None
+
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+
+    return str(value).strip().lower() in {"1", "true", "yes", "y"}
+
+
 def _first_string(payload, *keys):
     for key in keys:
         value = _required_string(payload, key)
@@ -863,6 +874,7 @@ def submit_stage_1_crm_lead():
     phone_number = _required_string(payload, "phone_number")
     email = _required_string(payload, "email")
     posthog_distinct_id = _required_string(payload, "posthog_distinct_id")
+    marketing_consent = _optional_bool_value(payload, "marketing_consent")
 
     missing_fields = [
         field
@@ -885,11 +897,19 @@ def submit_stage_1_crm_lead():
             phone_number=phone_number,
             email=email,
             posthog_distinct_id=posthog_distinct_id,
+            marketing_consent=marketing_consent,
         )
     except Exception as exc:
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
     first_name, last_name = _split_customer_name(name)
+    klaviyo_properties = {
+        "rootle_stage": "indicative_offer_started",
+        "posthog_distinct_id": posthog_distinct_id,
+    }
+    if marketing_consent is not None:
+        klaviyo_properties["marketing_consent"] = marketing_consent
+
     try:
         from klaviyo import upsert_profile_from_attio_contact
 
@@ -899,10 +919,7 @@ def submit_stage_1_crm_lead():
             phone_number=phone_number,
             first_name=first_name,
             last_name=last_name,
-            properties={
-                "rootle_stage": ROOTLE_STAGE_CONTACT_DETAILS,
-                "posthog_distinct_id": posthog_distinct_id,
-            },
+            properties=klaviyo_properties,
         )
     except Exception as exc:
         klaviyo_sync = {
@@ -917,6 +934,7 @@ def submit_stage_1_crm_lead():
             "attio_id": crm_result["record_id"],
             "crm_record_id": crm_result["record_id"],
             "stage": ROOTLE_STAGE_CONTACT_DETAILS,
+            "marketing_consent": marketing_consent,
             "klaviyo_sync": klaviyo_sync,
             "erp_lead_created": False,
             "attio_record_created": crm_result["created"],
@@ -1964,6 +1982,7 @@ def submit_contact_details():
     city = _required_string(payload, "city")
     postcode = _required_string(payload, "postcode")
     country = _required_string(payload, "country")
+    marketing_consent = _optional_bool_value(payload, "marketing_consent")
     crm_valuation_request_id = (
         _required_string(payload, "attio_valuation_request_id")
         or _required_string(payload, "crm_valuation_request_id")
@@ -1994,6 +2013,7 @@ def submit_contact_details():
             city=city,
             postcode=postcode,
             country=country,
+            marketing_consent=marketing_consent,
         )
     except Exception as exc:
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
@@ -2009,6 +2029,8 @@ def submit_contact_details():
         valuation.city = city or valuation.city
         valuation.postcode = postcode or valuation.postcode
         valuation.country = country or valuation.country
+        if marketing_consent is not None:
+            valuation.marketing_consent = marketing_consent
         valuation.contact_details_received_at = now
         valuation.stage_3_completed_at = now
         valuation.current_stage = "contact_details_received"
@@ -2028,10 +2050,25 @@ def submit_contact_details():
 
     db.session.commit()
 
+    try:
+        from klaviyo import upsert_profile_properties_by_attio_person
+
+        klaviyo_sync = upsert_profile_properties_by_attio_person(
+            attio_person_record_id=person_record_id,
+            properties={"rootle_stage": "indicative_offer_completed"},
+        )
+    except Exception as exc:
+        klaviyo_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
+
     return jsonify(
         {
             "attio_id": person_record_id,
             "crm_person_record_id": person_record_id,
+            "marketing_consent": marketing_consent,
+            "klaviyo_sync": klaviyo_sync,
             "updated_erp_valuations": [_valuation_to_dict(item) for item in valuations],
         }
     )
@@ -2047,6 +2084,7 @@ def create_lead():
         email=payload.get("email"),
         source=payload.get("source"),
         preferred_contact_method=payload.get("preferred_contact_method"),
+        marketing_consent=_optional_bool_value(payload, "marketing_consent"),
         crm_system=payload.get("crm_system", "attio"),
         crm_record_id=payload.get("crm_record_id") or payload.get("attio_record_id"),
         meta=payload.get("metadata"),

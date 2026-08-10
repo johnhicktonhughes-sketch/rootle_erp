@@ -58,8 +58,8 @@ The API will start on `http://127.0.0.1:5000`.
 ### Website form stage 1
 
 The website form should send stage 1 submissions with name, phone number, email,
-and PostHog ID to Attio through the ERP API, without creating an ERP lead record
-yet.
+PostHog ID, and marketing consent to Attio through the ERP API, without creating
+an ERP lead record yet.
 
 ```http
 POST /api/crm/leads/stage-1
@@ -70,7 +70,8 @@ POST /api/crm/leads/stage-1
   "name": "Jane Smith",
   "phone_number": "+447123456789",
   "email": "jane@example.com",
-  "posthog_distinct_id": "0192..."
+  "posthog_distinct_id": "0192...",
+  "marketing_consent": true
 }
 ```
 
@@ -82,6 +83,7 @@ The response includes the Attio record id and confirms that no ERP lead was crea
   "attio_id": "record-id",
   "crm_record_id": "record-id",
   "stage": "contact_details",
+  "marketing_consent": true,
   "klaviyo_sync": {
     "status": "success"
   },
@@ -194,7 +196,8 @@ POST /api/crm/contact-details
   "address_line_1": "1 Street",
   "city": "London",
   "postcode": "SW1A 1AA",
-  "country": "GB"
+  "country": "GB",
+  "marketing_consent": true
 }
 ```
 

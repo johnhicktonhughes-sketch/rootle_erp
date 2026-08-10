@@ -207,8 +207,14 @@ class ValuationRequestTests(unittest.TestCase):
             update_attio_person_contact_details=update_attio_person_contact_details,
             update_attio_valuation_request_stage_3=update_attio_valuation_request_stage_3,
         )
+        klaviyo = types.SimpleNamespace(
+            upsert_profile_properties_by_attio_person=lambda **kwargs: {
+                "status": "success",
+                "kwargs": kwargs,
+            },
+        )
 
-        with patch.dict(sys.modules, {"attio": attio}):
+        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
             create_response = self.client.post(
                 "/api/crm/valuation-requests",
                 json={
@@ -225,6 +231,7 @@ class ValuationRequestTests(unittest.TestCase):
                     "address_line_1": "1 Test Street",
                     "postcode": "TS42QN",
                     "attio_valuation_request_id": "vr_contact",
+                    "marketing_consent": False,
                 },
             )
 
@@ -233,15 +240,25 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertNotIn("email", person_updates[0])
         self.assertEqual(person_updates[0]["address_line_1"], "1 Test Street")
         self.assertEqual(person_updates[0]["postcode"], "TS42QN")
+        self.assertIs(person_updates[0]["marketing_consent"], False)
         self.assertEqual(stage_updates[0]["valuation_request_id"], "vr_contact")
 
         data = contact_response.get_json()
+        self.assertIs(data["marketing_consent"], False)
         self.assertEqual(
             data["updated_erp_valuations"][0]["status"],
             "customer_details_received",
         )
         self.assertEqual(data["updated_erp_valuations"][0]["postcode"], "TS42QN")
-        self.assertNotIn("klaviyo_sync", data)
+        self.assertIs(data["updated_erp_valuations"][0]["marketing_consent"], False)
+        self.assertEqual(data["klaviyo_sync"]["status"], "success")
+        self.assertEqual(
+            data["klaviyo_sync"]["kwargs"],
+            {
+                "attio_person_record_id": "person_contact",
+                "properties": {"rootle_stage": "indicative_offer_completed"},
+            },
+        )
 
     def test_contact_details_require_address_not_email(self):
         def update_attio_person_contact_details(**kwargs):
@@ -280,6 +297,107 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(
             attributes["properties"]["rootle_stage"],
             "address_available",
+        )
+        external_id_payload = _profile_payload(
+            attio_person_record_id="person_456",
+            properties={"rootle_stage": "indicative_offer_completed"},
+        )
+        external_id_attributes = external_id_payload["data"]["attributes"]
+        self.assertEqual(external_id_attributes["external_id"], "person_456")
+        self.assertNotIn("email", external_id_attributes)
+        self.assertEqual(
+            external_id_attributes["properties"]["rootle_stage"],
+            "indicative_offer_completed",
+        )
+
+    def test_klaviyo_adds_consented_profile_to_marketing_and_contact_lists(self):
+        from klaviyo import upsert_profile_from_attio_contact
+
+        calls = []
+
+        class FakeResponse:
+            ok = True
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, profile_id=None, status_code=200):
+                self.profile_id = profile_id
+                self.status_code = status_code
+
+            def json(self):
+                return {"data": {"id": self.profile_id}}
+
+        def fake_post(url, json, headers, timeout):
+            calls.append({"url": url, "json": json})
+            if url.endswith("/api/profile-import"):
+                return FakeResponse(profile_id="profile_123", status_code=201)
+            return FakeResponse(status_code=204)
+
+        with patch("klaviyo._api_key", lambda: "test-key"), patch(
+            "klaviyo._headers", lambda: {}
+        ), patch("klaviyo.requests.post", fake_post):
+            result = upsert_profile_from_attio_contact(
+                email="customer@example.com",
+                attio_person_record_id="person_123",
+                properties={"marketing_consent": True},
+            )
+
+        self.assertEqual(result["profile_id"], "profile_123")
+        self.assertEqual(
+            [sync["list_id"] for sync in result["list_sync"]],
+            ["Ub3nHY", "RWb2ew"],
+        )
+        self.assertEqual(
+            [call["url"] for call in calls[1:]],
+            [
+                "https://klaviyo.example.test/api/lists/Ub3nHY/relationships/profiles",
+                "https://klaviyo.example.test/api/lists/RWb2ew/relationships/profiles",
+            ],
+        )
+        self.assertEqual(
+            calls[1]["json"],
+            {"data": [{"type": "profile", "id": "profile_123"}]},
+        )
+
+    def test_klaviyo_adds_non_consented_profile_to_contact_list_only(self):
+        from klaviyo import upsert_profile_from_attio_contact
+
+        list_urls = []
+
+        class FakeResponse:
+            ok = True
+            status_code = 200
+            text = "{}"
+
+            def __init__(self, profile_id=None, status_code=200):
+                self.profile_id = profile_id
+                self.status_code = status_code
+
+            def json(self):
+                return {"data": {"id": self.profile_id}}
+
+        def fake_post(url, json, headers, timeout):
+            if url.endswith("/relationships/profiles"):
+                list_urls.append(url)
+                return FakeResponse(status_code=204)
+            return FakeResponse(profile_id="profile_456", status_code=200)
+
+        with patch("klaviyo._api_key", lambda: "test-key"), patch(
+            "klaviyo._headers", lambda: {}
+        ), patch("klaviyo.requests.post", fake_post):
+            result = upsert_profile_from_attio_contact(
+                email="customer@example.com",
+                attio_person_record_id="person_456",
+                properties={"marketing_consent": False},
+            )
+
+        self.assertEqual(
+            [sync["list_id"] for sync in result["list_sync"]],
+            ["RWb2ew"],
+        )
+        self.assertEqual(
+            list_urls,
+            ["https://klaviyo.example.test/api/lists/RWb2ew/relationships/profiles"],
         )
 
     def test_attio_person_contact_values_use_rootle_address_fields(self):
@@ -487,12 +605,14 @@ class ValuationRequestTests(unittest.TestCase):
                     "phone_number": "+447123456789",
                     "email": "jane@example.com",
                     "posthog_distinct_id": "ph_stage_1",
+                    "marketing_consent": True,
                 },
             )
 
         self.assertEqual(response.status_code, 201)
         data = response.get_json()
         self.assertEqual(data["stage"], "contact_details")
+        self.assertIs(data["marketing_consent"], True)
         self.assertEqual(data["klaviyo_sync"]["status"], "success")
         self.assertEqual(
             klaviyo_calls[0],
@@ -503,8 +623,9 @@ class ValuationRequestTests(unittest.TestCase):
                 "first_name": "Jane",
                 "last_name": "Smith",
                 "properties": {
-                    "rootle_stage": "contact_details",
+                    "rootle_stage": "indicative_offer_started",
                     "posthog_distinct_id": "ph_stage_1",
+                    "marketing_consent": True,
                 },
             },
         )
