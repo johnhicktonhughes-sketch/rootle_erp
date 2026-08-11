@@ -310,6 +310,38 @@ class ValuationRequestTests(unittest.TestCase):
             "indicative_offer_completed",
         )
 
+    def test_klaviyo_mev_event_payload_uses_attio_external_id(self):
+        from klaviyo import _event_payload
+
+        calculated_at = datetime(2026, 6, 20, 12, 0, 0)
+        payload = _event_payload(
+            metric_name="Rootle MEV Calculated",
+            attio_person_record_id="person_mev",
+            properties={"rootle_request_id": "request_mev"},
+            value=90.0,
+            value_currency="GBP",
+            time=calculated_at,
+            unique_id="rootle-mev-calculation-1-2026-06-20T12:00:00",
+        )
+
+        self.assertEqual(payload["data"]["type"], "event")
+        attributes = payload["data"]["attributes"]
+        self.assertEqual(
+            attributes["metric"]["data"]["attributes"]["name"],
+            "Rootle MEV Calculated",
+        )
+        self.assertEqual(
+            attributes["profile"]["data"]["attributes"]["external_id"],
+            "person_mev",
+        )
+        self.assertEqual(attributes["value"], 90.0)
+        self.assertEqual(attributes["value_currency"], "GBP")
+        self.assertEqual(attributes["time"], "2026-06-20T12:00:00")
+        self.assertEqual(
+            attributes["unique_id"],
+            "rootle-mev-calculation-1-2026-06-20T12:00:00",
+        )
+
     def test_klaviyo_subscribes_consented_profile_and_adds_contact_list(self):
         from klaviyo import upsert_profile_from_attio_contact
 
@@ -856,6 +888,7 @@ class ValuationRequestTests(unittest.TestCase):
 
     def test_mev_calculation_updates_latest_snapshot_and_keeps_history(self):
         attio_mev_updates = []
+        klaviyo_mev_events = []
 
         def update_attio_valuation_request_mev(**kwargs):
             attio_mev_updates.append(kwargs)
@@ -865,8 +898,14 @@ class ValuationRequestTests(unittest.TestCase):
             create_attio_valuation_request=lambda **kwargs: "vr_mev",
             update_attio_valuation_request_mev=update_attio_valuation_request_mev,
         )
+        klaviyo = types.SimpleNamespace(
+            create_mev_calculated_event=lambda **kwargs: klaviyo_mev_events.append(
+                kwargs
+            )
+            or {"status": "success", "metric": "Rootle MEV Calculated"},
+        )
 
-        with patch.dict(sys.modules, {"attio": attio}):
+        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
             create_response = self.client.post(
                 "/api/crm/valuation-requests",
                 json={
@@ -932,6 +971,18 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(str(attio_mev_updates[-1]["mev_high"]), "140.00")
         self.assertEqual(attio_mev_updates[-1]["pricing_request_id"], "8")
         self.assertEqual(attio_mev_updates[-1]["pricing_status"], "mev_calculated")
+        self.assertEqual(len(klaviyo_mev_events), 2)
+        self.assertEqual(klaviyo_mev_events[-1]["attio_person_record_id"], "person_mev")
+        self.assertEqual(klaviyo_mev_events[-1]["rootle_request_id"], "request_mev")
+        self.assertEqual(str(klaviyo_mev_events[-1]["amount"]), "90.00")
+        self.assertEqual(str(klaviyo_mev_events[-1]["mev_low"]), "70.00")
+        self.assertEqual(str(klaviyo_mev_events[-1]["mev_high"]), "140.00")
+        self.assertEqual(klaviyo_mev_events[-1]["pricing_request_id"], "8")
+        self.assertEqual(klaviyo_mev_events[-1]["pricing_status"], "mev_calculated")
+        self.assertEqual(
+            data["klaviyo_sync"],
+            {"status": "success", "metric": "Rootle MEV Calculated"},
+        )
 
     def test_mev_calculation_requires_amount_and_range(self):
         attio = types.SimpleNamespace(

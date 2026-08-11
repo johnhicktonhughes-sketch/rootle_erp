@@ -17,6 +17,7 @@ KLAVIYO_ROOTLE_CONTACT_LIST_ID = "RWb2ew"
 KLAVIYO_STAGE_PROPERTY = "rootle_stage"
 KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED = "indicative_offer_started"
 KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED = "indicative_offer_completed"
+KLAVIYO_MEV_CALCULATED_METRIC = "Rootle MEV Calculated"
 
 
 def _config_value(key: str, default: str | None = None) -> str | None:
@@ -115,6 +116,45 @@ def _profile_payload(
     )
 
     return {"data": {"type": "profile", "attributes": attributes}}
+
+
+def _event_payload(
+    *,
+    metric_name: str,
+    attio_person_record_id: str,
+    properties: dict,
+    value=None,
+    value_currency: str | None = None,
+    time: datetime | None = None,
+    unique_id: str | None = None,
+) -> dict:
+    attributes = {
+        "properties": properties,
+        "metric": {
+            "data": {
+                "type": "metric",
+                "attributes": {"name": metric_name},
+            }
+        },
+        "profile": {
+            "data": {
+                "type": "profile",
+                "attributes": {"external_id": attio_person_record_id},
+            }
+        },
+    }
+
+    optional_attributes = {
+        "value": value,
+        "value_currency": value_currency,
+        "time": time.isoformat() if time else None,
+        "unique_id": unique_id,
+    }
+    attributes.update(
+        {key: value for key, value in optional_attributes.items() if value is not None}
+    )
+
+    return {"data": {"type": "event", "attributes": attributes}}
 
 
 def _profile_id_from_response(response: requests.Response) -> str | None:
@@ -272,6 +312,94 @@ def upsert_profile_properties_by_attio_person(
         "integration_log_id": log.id,
         "response_status": response.status_code,
         "profile_id": _profile_id_from_response(response),
+    }
+
+
+def create_mev_calculated_event(
+    *,
+    attio_person_record_id: str,
+    valuation_id: int,
+    rootle_request_id: str,
+    amount,
+    currency: str,
+    margin,
+    calculated_at: datetime,
+    mev_low=None,
+    mev_high=None,
+    pricing_request_id: str | None = None,
+    crm_valuation_request_id: str | None = None,
+    item_categories: list | None = None,
+    item_photo_url: str | None = None,
+    valuation_guide_id: str | None = None,
+    valuation_guide_url: str | None = None,
+    calculation_method: str | None = None,
+    calculated_by: str | None = None,
+    pricing_status: str | None = None,
+) -> dict:
+    properties = {
+        "erp_valuation_id": valuation_id,
+        "rootle_request_id": rootle_request_id,
+        "crm_valuation_request_id": crm_valuation_request_id,
+        "latest_mev_amount": float(amount),
+        "latest_mev_currency": currency,
+        "latest_mev_margin": float(margin),
+        "latest_mev_calculated_at": calculated_at.isoformat(),
+        "mev_low": float(mev_low) if mev_low is not None else None,
+        "mev_high": float(mev_high) if mev_high is not None else None,
+        "pricing_request_id": pricing_request_id,
+        "pricing_status": pricing_status,
+        "item_categories": item_categories or [],
+        "item_photo_url": item_photo_url,
+        "valuation_guide_id": valuation_guide_id,
+        "valuation_guide_url": valuation_guide_url,
+        "calculation_method": calculation_method,
+        "calculated_by": calculated_by,
+        "rootle_stage": KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED,
+    }
+    properties = {key: value for key, value in properties.items() if value is not None}
+    payload = _event_payload(
+        metric_name=KLAVIYO_MEV_CALCULATED_METRIC,
+        attio_person_record_id=attio_person_record_id,
+        properties=properties,
+        value=float(amount),
+        value_currency=currency,
+        time=calculated_at,
+        unique_id=f"rootle-mev-calculation-{valuation_id}-{calculated_at.isoformat()}",
+    )
+
+    if not _api_key():
+        _record_klaviyo_result(
+            entity_type="event",
+            external_id=rootle_request_id,
+            payload=payload,
+            status="skipped",
+            message="KLAVIYO_API_KEY is not configured.",
+        )
+        return {"status": "skipped", "reason": "missing_api_key"}
+
+    response = requests.post(
+        f"{_base_url()}/api/events",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="event",
+        external_id=rootle_request_id,
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+        "metric": KLAVIYO_MEV_CALCULATED_METRIC,
     }
 
 

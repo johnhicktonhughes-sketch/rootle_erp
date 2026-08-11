@@ -425,6 +425,31 @@ def _store_mev_calculation(
     return calculation
 
 
+def _sync_mev_calculation_to_klaviyo(*, valuation, calculation):
+    from klaviyo import create_mev_calculated_event
+
+    return create_mev_calculated_event(
+        attio_person_record_id=valuation.crm_person_record_id,
+        valuation_id=valuation.id,
+        rootle_request_id=valuation.rootle_request_id,
+        amount=calculation.amount,
+        currency=calculation.currency,
+        margin=calculation.margin,
+        calculated_at=calculation.calculated_at,
+        mev_low=calculation.mev_low,
+        mev_high=calculation.mev_high,
+        pricing_request_id=calculation.pricing_request_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        item_categories=valuation.item_categories,
+        item_photo_url=valuation.item_photo_url,
+        valuation_guide_id=valuation.valuation_guide_id,
+        valuation_guide_url=valuation.valuation_guide_url,
+        calculation_method=calculation.calculation_method,
+        calculated_by=calculation.calculated_by,
+        pricing_status=valuation.pricing_status,
+    )
+
+
 def _reset_token_is_valid(payload):
     expected_token = current_app.config.get("ROOTLE_RESET_TOKEN")
     if not expected_token:
@@ -1529,6 +1554,16 @@ def request_valuation_mev_calculation():
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
     db.session.commit()
+    try:
+        klaviyo_sync = _sync_mev_calculation_to_klaviyo(
+            valuation=valuation,
+            calculation=calculation,
+        )
+    except Exception as exc:
+        klaviyo_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
 
     return (
         jsonify(
@@ -1536,6 +1571,7 @@ def request_valuation_mev_calculation():
                 "valuation": _valuation_to_dict(valuation),
                 "mev_calculation": _mev_calculation_to_dict(calculation),
                 "pricing_prediction": prediction,
+                "klaviyo_sync": klaviyo_sync,
             }
         ),
         201,
@@ -1627,12 +1663,23 @@ def add_valuation_mev_calculation(valuation_id):
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
     db.session.commit()
+    try:
+        klaviyo_sync = _sync_mev_calculation_to_klaviyo(
+            valuation=valuation,
+            calculation=calculation,
+        )
+    except Exception as exc:
+        klaviyo_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
 
     return (
         jsonify(
             {
                 "valuation": _valuation_to_dict(valuation),
                 "mev_calculation": _mev_calculation_to_dict(calculation),
+                "klaviyo_sync": klaviyo_sync,
             }
         ),
         201,

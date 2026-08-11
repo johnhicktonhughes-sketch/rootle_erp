@@ -238,8 +238,13 @@ stored as `pricing_request_id`. Flat `low_total_prediction`,
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
 currency, margin, calculation timestamp, MEV range, and pricing request id are
 also stored on `valuation_requests`. The latest amount, currency, margin, and
-timestamp are mirrored to the linked Attio `valuation_requests` record. MEV
-calculation also changes `pricing_status` from `pricing_pending` to
+timestamp are mirrored to the linked Attio `valuation_requests` record. After
+the ERP/Attio transaction is committed, the ERP also posts a `Rootle MEV
+Calculated` event to the Klaviyo profile identified by the Attio person
+`external_id`. The event carries the MEV amount, currency, margin, range,
+pricing request id, Rootle request id, item categories, and guide/photo context;
+the API response includes `klaviyo_sync` with `success`, `skipped`, or `failed`
+status. MEV calculation also changes `pricing_status` from `pricing_pending` to
 `mev_calculated`; it does not change `rootle_stage`, which remains the customer
 data completeness signal (`item_details_available` without address details,
 `address_available` with address details).
