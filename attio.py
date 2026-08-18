@@ -574,13 +574,7 @@ def _lead_description(lead: Lead) -> str:
 def _lead_values(lead: Lead) -> dict:
     full_name = f"{lead.first_name or ''} {lead.last_name or ''}".strip()
     values = {
-        "name": [
-            {
-                "first_name": lead.first_name,
-                "last_name": lead.last_name,
-                "full_name": full_name,
-            }
-        ],
+        "name": [_attio_name_value(full_name)],
         "description": _lead_description(lead),
     }
 
@@ -593,7 +587,7 @@ def _lead_values(lead: Lead) -> dict:
         values["email_addresses"] = [lead.email]
 
     if lead.phone:
-        values["phone_numbers"] = [{"original_phone_number": lead.phone}]
+        values["phone_numbers"] = [_attio_phone_number_value(lead.phone)]
 
     address = {
         "line_1": lead.address_line_1,
@@ -628,13 +622,32 @@ def _lead_marketing_values(lead: Lead) -> dict:
     return marketing_values
 
 
-def _split_name(name: str) -> tuple[str, str | None]:
-    parts = name.strip().split()
+def _attio_name_value(name: str) -> dict:
+    full_name = name.strip()
+    parts = full_name.split()
     if not parts:
-        return "", None
-    if len(parts) == 1:
-        return parts[0], None
-    return parts[0], " ".join(parts[1:])
+        first_name = ""
+        last_name = ""
+    elif len(parts) == 1:
+        first_name = parts[0]
+        last_name = ""
+    else:
+        first_name = parts[0]
+        last_name = " ".join(parts[1:])
+    return {
+        "first_name": first_name,
+        "last_name": last_name,
+        "full_name": full_name,
+    }
+
+
+def _attio_phone_number_value(phone_number: str) -> dict:
+    value = {"original_phone_number": phone_number.strip()}
+    if value["original_phone_number"].startswith("+44") or value[
+        "original_phone_number"
+    ].startswith("0"):
+        value["country_code"] = "GB"
+    return value
 
 
 def _stage_1_values(
@@ -645,16 +658,9 @@ def _stage_1_values(
     posthog_distinct_id: str,
     marketing_consent: bool | None = None,
 ) -> dict:
-    first_name, last_name = _split_name(name)
     values = {
-        "name": [
-            {
-                "first_name": first_name,
-                "last_name": last_name,
-                "full_name": name.strip(),
-            }
-        ],
-        "phone_numbers": [{"original_phone_number": phone_number.strip()}],
+        "name": [_attio_name_value(name)],
+        "phone_numbers": [_attio_phone_number_value(phone_number)],
         "description": f"Rootle website lead\nStage: {ROOTLE_STAGE_CONTACT_DETAILS}",
         ATTIO_STAGE_ATTRIBUTE_SLUG: ROOTLE_STAGE_CONTACT_DETAILS,
         "rootle_posthog_distinct_id": posthog_distinct_id.strip(),

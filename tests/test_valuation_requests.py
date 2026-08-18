@@ -494,6 +494,35 @@ class ValuationRequestTests(unittest.TestCase):
             ["customer@example.com"],
         )
         self.assertEqual(
+            _stage_1_values(
+                name="Jane Smith",
+                phone_number="+447123456789",
+                email="customer@example.com",
+                posthog_distinct_id="ph_123",
+            )["phone_numbers"],
+            [
+                {
+                    "original_phone_number": "+447123456789",
+                    "country_code": "GB",
+                }
+            ],
+        )
+        self.assertEqual(
+            _stage_1_values(
+                name="Claudia",
+                phone_number="+447455131901",
+                email="customer@example.com",
+                posthog_distinct_id="ph_123",
+            )["name"],
+            [
+                {
+                    "first_name": "Claudia",
+                    "last_name": "",
+                    "full_name": "Claudia",
+                }
+            ],
+        )
+        self.assertEqual(
             _valuation_request_values(
                 person_record_id="person_123",
                 rootle_request_id="request_123",
@@ -632,6 +661,33 @@ class ValuationRequestTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.get_json()["fields"], ["email"])
+
+    def test_stage_1_attio_validation_errors_return_400(self):
+        def fail_attio_validation(**kwargs):
+            raise RuntimeError(
+                'Attio API returned 400: {"code":"validation_type",'
+                '"message":"An invalid value was passed to attribute with slug '
+                '\\"phone_numbers\\".","validation_errors":[{"code":"invalid",'
+                '"path":["original_phone_number"],"message":"Invalid phone number"}]}'
+            )
+
+        attio = types.SimpleNamespace(get_or_create_attio_stage_1_lead=fail_attio_validation)
+
+        with patch.dict(sys.modules, {"attio": attio}):
+            response = self.client.post(
+                "/api/crm/leads/stage-1",
+                json={
+                    "name": "Jane Smith",
+                    "phone_number": "+447700900000",
+                    "email": "jane@example.com",
+                    "posthog_distinct_id": "ph_stage_1",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertEqual(data["error"], "invalid_crm_payload")
+        self.assertEqual(data["fields"], ["original_phone_number"])
 
     def test_stage_1_syncs_klaviyo_profile_with_contact_details_stage(self):
         klaviyo_calls = []

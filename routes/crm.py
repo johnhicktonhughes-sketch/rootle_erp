@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import hashlib
 import hmac
+import json
 import re
 from uuid import uuid4
 
@@ -44,6 +45,34 @@ def _required_string(payload, key):
         return None
     value = str(value).strip()
     return value or None
+
+
+def _attio_validation_error_payload(exc):
+    message = str(exc)
+    prefix = "Attio API returned 400: "
+    if not message.startswith(prefix):
+        return None
+
+    try:
+        error_payload = json.loads(message[len(prefix) :])
+    except json.JSONDecodeError:
+        return None
+
+    if error_payload.get("code") != "validation_type":
+        return None
+
+    fields = []
+    for validation_error in error_payload.get("validation_errors") or []:
+        path = validation_error.get("path") or []
+        if path:
+            fields.append(path[0])
+
+    return {
+        "error": "invalid_crm_payload",
+        "message": error_payload.get("message") or "Attio rejected the submitted data.",
+        "fields": fields,
+        "validation_errors": error_payload.get("validation_errors") or [],
+    }
 
 
 def _sync_person_posthog_distinct_id(*, person_record_id, posthog_distinct_id):
@@ -925,6 +954,9 @@ def submit_stage_1_crm_lead():
             marketing_consent=marketing_consent,
         )
     except Exception as exc:
+        validation_error = _attio_validation_error_payload(exc)
+        if validation_error:
+            return jsonify(validation_error), 400
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
     first_name, last_name = _split_customer_name(name)
