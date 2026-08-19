@@ -463,8 +463,12 @@ ROOTLE_PERSON_CONTACT_ATTRIBUTES = (
     },
     {
         "title": "Rootle Marketing Consent",
-        "api_slug": "rootle_marketing_consent",
-        "description": "Marketing consent captured in Rootle form submissions.",
+        "api_slug": "rootle_marketing_consent_v2",
+        "description": (
+            "Marketing consent captured in Rootle form submissions. "
+            "Replaces rootle_marketing_consent, which was mistakenly "
+            "provisioned as a text field and is now archived."
+        ),
         "type": "checkbox",
     },
 )
@@ -668,7 +672,7 @@ def _stage_1_values(
     if email:
         values["email_addresses"] = [email.strip()]
     if marketing_consent is not None:
-        values["rootle_marketing_consent"] = marketing_consent
+        values["rootle_marketing_consent_v2"] = marketing_consent
     return values
 
 
@@ -776,7 +780,7 @@ def _person_contact_values(
     if email:
         values["email_addresses"] = [email]
     if marketing_consent is not None:
-        values["rootle_marketing_consent"] = marketing_consent
+        values["rootle_marketing_consent_v2"] = marketing_consent
 
     optional_values = {
         "rootle_address_line_1": address_line_1,
