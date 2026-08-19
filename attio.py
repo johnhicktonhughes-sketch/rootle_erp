@@ -987,28 +987,6 @@ def _list_object_attributes(object_slug: str) -> list[dict]:
     return response.json().get("data", [])
 
 
-def _create_text_attribute(attribute: dict) -> dict:
-    response = _attio_request(
-        "POST",
-        f"objects/{ATTIO_OBJECT_SLUG}/attributes",
-        json={
-            "data": {
-                "title": attribute["title"],
-                "description": attribute["description"],
-                "api_slug": attribute["api_slug"],
-                "type": "text",
-                "is_required": False,
-                "is_unique": False,
-                "is_multiselect": False,
-                "config": {},
-            }
-        },
-    )
-    if not response.ok:
-        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
-    return response.json()["data"]
-
-
 def _create_person_attribute(attribute: dict) -> dict:
     response = _attio_request(
         "POST",
@@ -1115,7 +1093,7 @@ def ensure_person_contact_attributes() -> list[dict]:
             ensured.append(existing)
             continue
 
-        ensured.append(_create_text_attribute(attribute))
+        ensured.append(_create_person_attribute(attribute))
 
     return ensured
 
