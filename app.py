@@ -17,6 +17,29 @@ def _request_api_key():
     return request.headers.get("X-API-Key", "").strip()
 
 
+def _warm_attio_schema_cache(app):
+    """Pre-fetch Attio's cached schema lookups so the first customer request
+    per deploy doesn't pay the cost (previously ~13s on valuation-requests,
+    ~14s on contact-details)."""
+    if not app.config.get("ATTIO_WARM_SCHEMA_CACHE_ON_BOOT"):
+        return
+
+    import attio
+
+    for warm in (
+        attio.ensure_stage_attribute,
+        attio.ensure_marketing_attribution_attributes,
+        attio.ensure_person_contact_attributes,
+        attio.ensure_valuation_request_object,
+    ):
+        try:
+            warm()
+        except Exception:
+            app.logger.exception(
+                "Failed to warm Attio schema cache for %s at startup", warm.__name__
+            )
+
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
@@ -81,6 +104,9 @@ def create_app(config_class=Config):
     @app.route("/openapi.json")
     def openapi():
         return jsonify(OPENAPI_SPEC)
+
+    with app.app_context():
+        _warm_attio_schema_cache(app)
 
     return app
 

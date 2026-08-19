@@ -30,6 +30,7 @@ class TestConfig:
     KLAVIYO_API_KEY = None
     KLAVIYO_API_BASE_URL = "https://klaviyo.example.test"
     KLAVIYO_API_REVISION = "2026-04-15"
+    ATTIO_WARM_SCHEMA_CACHE_ON_BOOT = False
 
 
 class ValuationRequestTests(unittest.TestCase):
