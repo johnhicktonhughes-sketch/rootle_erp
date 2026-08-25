@@ -38,6 +38,9 @@ class Config:
     KLAVIYO_API_KEY = os.getenv("KLAVIYO_API_KEY")
     KLAVIYO_API_BASE_URL = os.getenv("KLAVIYO_API_BASE_URL", "https://a.klaviyo.com")
     KLAVIYO_API_REVISION = os.getenv("KLAVIYO_API_REVISION", "2026-04-15")
+    KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID = os.getenv(
+        "KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID"
+    )
     ATTIO_WARM_SCHEMA_CACHE_ON_BOOT = os.getenv(
         "ATTIO_WARM_SCHEMA_CACHE_ON_BOOT", "true"
     ).strip().lower() in {"1", "true", "yes", "y"}

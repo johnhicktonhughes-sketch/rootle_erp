@@ -479,6 +479,187 @@ def _sync_mev_calculation_to_klaviyo(*, valuation, calculation):
     )
 
 
+def _sync_stage_1_to_klaviyo_event(
+    *,
+    attio_person_record_id,
+    email,
+    phone_number,
+    first_name,
+    last_name,
+    posthog_distinct_id,
+    marketing_consent,
+):
+    from klaviyo import create_stage_1_completed_event
+
+    return create_stage_1_completed_event(
+        attio_person_record_id=attio_person_record_id,
+        email=email,
+        phone_number=phone_number,
+        first_name=first_name,
+        last_name=last_name,
+        posthog_distinct_id=posthog_distinct_id,
+        marketing_consent=marketing_consent,
+    )
+
+
+def _sync_stage_2_to_klaviyo_event(*, valuation):
+    from klaviyo import create_stage_2_completed_event
+
+    return create_stage_2_completed_event(
+        attio_person_record_id=valuation.crm_person_record_id,
+        valuation_id=valuation.id,
+        rootle_request_id=valuation.rootle_request_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        item_categories=valuation.item_categories,
+        item_photo_url=valuation.item_photo_url,
+        valuation_guide_id=valuation.valuation_guide_id,
+        valuation_guide_url=valuation.valuation_guide_url,
+        posthog_distinct_id=valuation.posthog_distinct_id,
+        source=valuation.source,
+        occurred_at=valuation.item_submitted_at,
+    )
+
+
+def _sync_postage_opportunity_to_klaviyo_object(*, opportunity):
+    from klaviyo import sync_postage_opportunity_object
+
+    valuation = opportunity.valuation
+    return sync_postage_opportunity_object(
+        attio_person_record_id=opportunity.crm_person_record_id,
+        erp_postage_opportunity_id=opportunity.id,
+        crm_postage_opportunity_id=opportunity.crm_postage_opportunity_id,
+        rootle_postage_opportunity_id=opportunity.rootle_postage_opportunity_id,
+        rootle_request_id=opportunity.rootle_request_id,
+        crm_valuation_request_id=opportunity.crm_valuation_request_id,
+        status=opportunity.status,
+        barcode_value=opportunity.barcode_value,
+        qr_payload=opportunity.qr_payload,
+        triggered_at=opportunity.triggered_at,
+        triggered_by=opportunity.triggered_by,
+        latest_mev_amount=valuation.latest_mev_amount,
+        latest_mev_currency=valuation.latest_mev_currency,
+        item_categories=valuation.item_categories,
+        item_photo_url=valuation.item_photo_url,
+    )
+
+
+def _create_postage_opportunity_for_valuation(
+    *,
+    valuation,
+    rootle_postage_opportunity_id=None,
+    triggered_by=None,
+    notes=None,
+    metadata=None,
+):
+    existing_opportunity = (
+        PostageOpportunity.query.filter_by(lead_valuation_id=valuation.id)
+        .order_by(PostageOpportunity.created_at.desc())
+        .first()
+    )
+    if existing_opportunity:
+        return existing_opportunity, False
+
+    rootle_postage_opportunity_id = (
+        rootle_postage_opportunity_id or f"postage-{uuid4().hex}"
+    )
+    triggered_at = datetime.utcnow()
+
+    from attio import create_attio_postage_opportunity
+
+    attio_postage_opportunity = create_attio_postage_opportunity(
+        person_record_id=valuation.crm_person_record_id,
+        valuation_request_id=valuation.crm_valuation_request_id,
+        rootle_request_id=valuation.rootle_request_id,
+        rootle_postage_opportunity_id=rootle_postage_opportunity_id,
+        triggered_at=triggered_at,
+        triggered_by=triggered_by,
+        latest_mev_amount=valuation.latest_mev_amount,
+        latest_mev_currency=valuation.latest_mev_currency,
+    )
+
+    if isinstance(attio_postage_opportunity, str):
+        crm_postage_opportunity_id = attio_postage_opportunity
+        barcode_value = crm_postage_opportunity_id
+        qr_payload = crm_postage_opportunity_id
+        postage_asset_meta = {}
+    else:
+        crm_postage_opportunity_id = attio_postage_opportunity["record_id"]
+        barcode_value = attio_postage_opportunity["barcode_value"]
+        qr_payload = attio_postage_opportunity["qr_payload"]
+        postage_asset_meta = {
+            key: attio_postage_opportunity.get(key)
+            for key in ("barcode_image", "qr_code_image")
+            if attio_postage_opportunity.get(key)
+        }
+
+    opportunity = PostageOpportunity(
+        lead_valuation_id=valuation.id,
+        crm_person_record_id=valuation.crm_person_record_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        crm_postage_opportunity_id=crm_postage_opportunity_id,
+        rootle_request_id=valuation.rootle_request_id,
+        rootle_postage_opportunity_id=rootle_postage_opportunity_id,
+        barcode_value=barcode_value,
+        qr_payload=qr_payload,
+        status="created",
+        triggered_by=triggered_by,
+        triggered_at=triggered_at,
+        notes=notes,
+        meta={
+            **(metadata if isinstance(metadata, dict) else {}),
+            **postage_asset_meta,
+        },
+    )
+    db.session.add(opportunity)
+    valuation.current_stage = "postage_opportunity_created"
+    valuation.status = "postage_opportunity_created"
+    db.session.flush()
+    return opportunity, True
+
+
+def _sync_mev_triggered_postage_opportunity(*, valuation, klaviyo_sync):
+    if klaviyo_sync.get("status") != "success":
+        return {
+            "status": "skipped",
+            "reason": "mev_klaviyo_event_not_successful",
+        }
+
+    try:
+        opportunity, created = _create_postage_opportunity_for_valuation(
+            valuation=valuation,
+            rootle_postage_opportunity_id=f"postage-{valuation.rootle_request_id}",
+            triggered_by="klaviyo_mev_calculated",
+            notes="Created after Rootle MEV Calculated event was sent to Klaviyo.",
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return {
+            "status": "failed",
+            "message": str(exc),
+        }
+
+    try:
+        klaviyo_object_sync = _sync_postage_opportunity_to_klaviyo_object(
+            opportunity=opportunity,
+        )
+    except Exception as exc:
+        klaviyo_object_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
+
+    return {
+        "status": "success",
+        "postage_opportunity_created": created,
+        "postage_opportunity": _postage_opportunity_to_dict(
+            opportunity,
+            include_context=True,
+        ),
+        "klaviyo_object_sync": klaviyo_object_sync,
+    }
+
+
 def _reset_token_is_valid(payload):
     expected_token = current_app.config.get("ROOTLE_RESET_TOKEN")
     if not expected_token:
@@ -984,6 +1165,22 @@ def submit_stage_1_crm_lead():
             "message": str(exc),
         }
 
+    try:
+        klaviyo_event_sync = _sync_stage_1_to_klaviyo_event(
+            attio_person_record_id=crm_result["record_id"],
+            email=email,
+            phone_number=phone_number,
+            first_name=first_name,
+            last_name=last_name,
+            posthog_distinct_id=posthog_distinct_id,
+            marketing_consent=marketing_consent,
+        )
+    except Exception as exc:
+        klaviyo_event_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
+
     status_code = 201 if crm_result["created"] else 200
     return jsonify(
         {
@@ -993,6 +1190,7 @@ def submit_stage_1_crm_lead():
             "stage": ROOTLE_STAGE_CONTACT_DETAILS,
             "marketing_consent": marketing_consent,
             "klaviyo_sync": klaviyo_sync,
+            "klaviyo_event_sync": klaviyo_event_sync,
             "erp_lead_created": False,
             "attio_record_created": crm_result["created"],
         }
@@ -1181,12 +1379,21 @@ def submit_item_for_valuation():
     db.session.add(valuation)
     db.session.commit()
 
+    try:
+        klaviyo_event_sync = _sync_stage_2_to_klaviyo_event(valuation=valuation)
+    except Exception as exc:
+        klaviyo_event_sync = {
+            "status": "failed",
+            "message": str(exc),
+        }
+
     return (
         jsonify(
             {
                 "valuation": _valuation_to_dict(valuation),
                 "attio_valuation_request_id": crm_valuation_request_id,
                 "erp_valuation_created": True,
+                "klaviyo_event_sync": klaviyo_event_sync,
             }
         ),
         201,
@@ -1597,6 +1804,11 @@ def request_valuation_mev_calculation():
             "message": str(exc),
         }
 
+    postage_opportunity_sync = _sync_mev_triggered_postage_opportunity(
+        valuation=valuation,
+        klaviyo_sync=klaviyo_sync,
+    )
+
     return (
         jsonify(
             {
@@ -1604,6 +1816,7 @@ def request_valuation_mev_calculation():
                 "mev_calculation": _mev_calculation_to_dict(calculation),
                 "pricing_prediction": prediction,
                 "klaviyo_sync": klaviyo_sync,
+                "postage_opportunity_sync": postage_opportunity_sync,
             }
         ),
         201,
@@ -1706,12 +1919,18 @@ def add_valuation_mev_calculation(valuation_id):
             "message": str(exc),
         }
 
+    postage_opportunity_sync = _sync_mev_triggered_postage_opportunity(
+        valuation=valuation,
+        klaviyo_sync=klaviyo_sync,
+    )
+
     return (
         jsonify(
             {
                 "valuation": _valuation_to_dict(valuation),
                 "mev_calculation": _mev_calculation_to_dict(calculation),
                 "klaviyo_sync": klaviyo_sync,
+                "postage_opportunity_sync": postage_opportunity_sync,
             }
         ),
         201,
@@ -1800,87 +2019,34 @@ def create_postage_opportunity(valuation_id):
             400,
         )
 
-    existing_opportunity = (
-        PostageOpportunity.query.filter_by(lead_valuation_id=valuation.id)
-        .order_by(PostageOpportunity.created_at.desc())
-        .first()
-    )
-    if existing_opportunity:
-        return (
-            jsonify(
-                {
-                    "postage_opportunity": _postage_opportunity_to_dict(
-                        existing_opportunity,
-                        include_context=True,
-                    ),
-                    "postage_opportunity_created": False,
-                }
-            ),
-            200,
-        )
-
     rootle_postage_opportunity_id = (
         _required_string(payload, "rootle_postage_opportunity_id")
-        or f"postage-{uuid4().hex}"
     )
-    triggered_at = datetime.utcnow()
     triggered_by = _required_string(payload, "triggered_by")
     notes = _required_string(payload, "notes")
 
     try:
-        from attio import create_attio_postage_opportunity
-
-        attio_postage_opportunity = create_attio_postage_opportunity(
-            person_record_id=valuation.crm_person_record_id,
-            valuation_request_id=valuation.crm_valuation_request_id,
-            rootle_request_id=valuation.rootle_request_id,
+        opportunity, created = _create_postage_opportunity_for_valuation(
+            valuation=valuation,
             rootle_postage_opportunity_id=rootle_postage_opportunity_id,
-            triggered_at=triggered_at,
             triggered_by=triggered_by,
-            latest_mev_amount=valuation.latest_mev_amount,
-            latest_mev_currency=valuation.latest_mev_currency,
+            notes=notes,
+            metadata=payload.get("metadata"),
         )
+        db.session.commit()
     except Exception as exc:
         db.session.rollback()
         return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
 
-    if isinstance(attio_postage_opportunity, str):
-        crm_postage_opportunity_id = attio_postage_opportunity
-        barcode_value = crm_postage_opportunity_id
-        qr_payload = crm_postage_opportunity_id
-        postage_asset_meta = {}
-    else:
-        crm_postage_opportunity_id = attio_postage_opportunity["record_id"]
-        barcode_value = attio_postage_opportunity["barcode_value"]
-        qr_payload = attio_postage_opportunity["qr_payload"]
-        postage_asset_meta = {
-            key: attio_postage_opportunity.get(key)
-            for key in ("barcode_image", "qr_code_image")
-            if attio_postage_opportunity.get(key)
+    try:
+        klaviyo_object_sync = _sync_postage_opportunity_to_klaviyo_object(
+            opportunity=opportunity,
+        )
+    except Exception as exc:
+        klaviyo_object_sync = {
+            "status": "failed",
+            "message": str(exc),
         }
-
-    opportunity = PostageOpportunity(
-        lead_valuation_id=valuation.id,
-        crm_person_record_id=valuation.crm_person_record_id,
-        crm_valuation_request_id=valuation.crm_valuation_request_id,
-        crm_postage_opportunity_id=crm_postage_opportunity_id,
-        rootle_request_id=valuation.rootle_request_id,
-        rootle_postage_opportunity_id=rootle_postage_opportunity_id,
-        barcode_value=barcode_value,
-        qr_payload=qr_payload,
-        status="created",
-        triggered_by=triggered_by,
-        triggered_at=triggered_at,
-        notes=notes,
-        meta={
-            **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
-            **postage_asset_meta,
-        },
-    )
-    db.session.add(opportunity)
-    valuation.current_stage = "postage_opportunity_created"
-    valuation.status = "postage_opportunity_created"
-    db.session.commit()
 
     return (
         jsonify(
@@ -1889,10 +2055,11 @@ def create_postage_opportunity(valuation_id):
                     opportunity,
                     include_context=True,
                 ),
-                "postage_opportunity_created": True,
+                "postage_opportunity_created": created,
+                "klaviyo_object_sync": klaviyo_object_sync,
             }
         ),
-        201,
+        201 if created else 200,
     )
 
 

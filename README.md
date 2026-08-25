@@ -244,10 +244,12 @@ Calculated` event to the Klaviyo profile identified by the Attio person
 `external_id`. The event carries the MEV amount, currency, margin, range,
 pricing request id, Rootle request id, item categories, and guide/photo context;
 the API response includes `klaviyo_sync` with `success`, `skipped`, or `failed`
-status. MEV calculation also changes `pricing_status` from `pricing_pending` to
-`mev_calculated`; it does not change `rootle_stage`, which remains the customer
-data completeness signal (`item_details_available` without address details,
-`address_available` with address details).
+status. When that Klaviyo event is sent successfully, the ERP creates or reuses
+one linked Attio `postage_opportunity` and syncs it to Klaviyo as a custom-object
+data source record. MEV calculation also changes `pricing_status` from
+`pricing_pending` to `mev_calculated`; it does not change `rootle_stage`, which
+remains the customer data completeness signal (`item_details_available` without
+address details, `address_available` with address details).
 
 Pricing workers can list ERP valuation cases that are waiting for an MEV:
 
@@ -311,6 +313,13 @@ The Klaviyo profile helper creates or updates a Klaviyo profile using the Attio
 person record id as `external_id` and adds Rootle properties such as
 `rootle_stage` and `crm_person_record_id`.
 
+For postage opportunity custom objects, configure a Klaviyo custom-object data
+source and set `KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID` to that source id.
+The source mapping should read object fields from `object_record` and link the
+profile relationship from `relationships.external_id` using identifier type
+`external-id`. The ERP ingests one record per postage opportunity through
+Klaviyo's `data-source-record-bulk-create-jobs` endpoint.
+
 ### Inbound labels
 
 When a valuation has a latest GBP MEV above 100.00, the ERP can create one active
@@ -349,8 +358,10 @@ The repo includes an idempotent setup helper for the linked Attio
 python -c "from attio import ensure_postage_opportunity_object; print(ensure_postage_opportunity_object())"
 ```
 
-When a valuation request has `pricing_status=mev_calculated`, it can be manually
-promoted into a linked Attio `postage_opportunity` record:
+When a valuation request has `pricing_status=mev_calculated`, it is automatically
+promoted into a linked Attio `postage_opportunity` record after the `Rootle MEV
+Calculated` event is sent to Klaviyo. It can also be manually promoted or retried
+with:
 
 ```http
 POST /api/crm/valuation-requests/{valuation_id}/postage-opportunity
@@ -363,13 +374,15 @@ POST /api/crm/valuation-requests/{valuation_id}/postage-opportunity
 }
 ```
 
-The endpoint creates one Attio `postage_opportunity` related to the Attio Person
+The promotion creates one Attio `postage_opportunity` related to the Attio Person
 and source `valuation_requests` record. Once Attio returns the record id, the ERP
 generates QR/barcode SVG images that scan to that Attio postage opportunity id
 and patches them back onto the record. It also stores a local audit row in
 `postage_opportunities` with the Attio record id, operator, timestamp,
-`barcode_value`, and `qr_payload`. Calling the endpoint again for the same
-valuation returns the existing promotion instead of creating a duplicate.
+`barcode_value`, and `qr_payload`, then syncs the opportunity to Klaviyo as a
+custom-object data source record linked to the profile by Attio person
+`external_id`. Calling the endpoint again for the same valuation returns the
+existing promotion instead of creating a duplicate.
 
 The QR payload resolves to:
 

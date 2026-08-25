@@ -30,6 +30,7 @@ class TestConfig:
     KLAVIYO_API_KEY = None
     KLAVIYO_API_BASE_URL = "https://klaviyo.example.test"
     KLAVIYO_API_REVISION = "2026-04-15"
+    KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID = None
     ATTIO_WARM_SCHEMA_CACHE_ON_BOOT = False
 
 
@@ -80,6 +81,55 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertTrue(data["erp_valuation_updated"])
         self.assertEqual(data["valuation"]["item_categories"], ["gold", "coins", "silver"])
         self.assertEqual(data["valuation"]["pricing_status"], "pricing_pending")
+
+    def test_valuation_request_creates_stage_2_klaviyo_event(self):
+        klaviyo_events = []
+
+        attio = types.SimpleNamespace(
+            create_attio_valuation_request=lambda **kwargs: "vr_stage_2",
+        )
+        klaviyo = types.SimpleNamespace(
+            create_stage_2_completed_event=lambda **kwargs: klaviyo_events.append(
+                kwargs
+            )
+            or {"status": "success", "metric": "Rootle Stage 2 Completed"},
+        )
+
+        with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
+            response = self.client.post(
+                "/api/crm/valuation-requests",
+                json={
+                    "attio_id": "person_stage_2",
+                    "items": ["gold", "silver"],
+                    "picture_url": "https://example.com/item.jpg",
+                    "rootle_request_id": "request_stage_2",
+                    "posthog_distinct_id": "ph_stage_2",
+                    "valuation_guide_id": "guide_123",
+                    "valuation_guide_url": "https://example.com/guide",
+                    "source": "lovable",
+                },
+            )
+
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        valuation_id = data["valuation"]["id"]
+        self.assertEqual(
+            data["klaviyo_event_sync"],
+            {"status": "success", "metric": "Rootle Stage 2 Completed"},
+        )
+        self.assertEqual(len(klaviyo_events), 1)
+        self.assertEqual(klaviyo_events[0]["attio_person_record_id"], "person_stage_2")
+        self.assertEqual(klaviyo_events[0]["valuation_id"], valuation_id)
+        self.assertEqual(klaviyo_events[0]["rootle_request_id"], "request_stage_2")
+        self.assertEqual(klaviyo_events[0]["crm_valuation_request_id"], "vr_stage_2")
+        self.assertEqual(klaviyo_events[0]["item_categories"], ["gold", "silver"])
+        self.assertEqual(
+            klaviyo_events[0]["item_photo_url"],
+            "https://example.com/item.jpg",
+        )
+        self.assertEqual(klaviyo_events[0]["posthog_distinct_id"], "ph_stage_2")
+        self.assertEqual(klaviyo_events[0]["source"], "lovable")
+        self.assertIsNotNone(klaviyo_events[0]["occurred_at"])
 
     def test_item_categories_accept_comma_separated_string(self):
         attio = types.SimpleNamespace(
@@ -341,6 +391,39 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(
             attributes["unique_id"],
             "rootle-mev-calculation-1-2026-06-20T12:00:00",
+        )
+
+    def test_klaviyo_postage_object_payload_uses_attio_external_id_relationship(self):
+        from klaviyo import _data_source_record_bulk_payload
+
+        payload = _data_source_record_bulk_payload(
+            data_source_id="ds_postage",
+            records=[
+                {
+                    "object_record": {
+                        "id": "postage-request-1",
+                        "crm_postage_opportunity_id": "po_attio_1",
+                    },
+                    "relationships": {
+                        "external_id": "person_123",
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(
+            payload["data"]["relationships"]["data-source"]["data"]["id"],
+            "ds_postage",
+        )
+        record = payload["data"]["attributes"]["data-source-records"]["data"][0]
+        self.assertEqual(record["type"], "data-source-record")
+        self.assertEqual(
+            record["attributes"]["record"]["object_record"]["id"],
+            "postage-request-1",
+        )
+        self.assertEqual(
+            record["attributes"]["record"]["relationships"]["external_id"],
+            "person_123",
         )
 
     def test_klaviyo_subscribes_consented_profile_and_adds_contact_list(self):
@@ -692,6 +775,7 @@ class ValuationRequestTests(unittest.TestCase):
 
     def test_stage_1_syncs_klaviyo_profile_with_contact_details_stage(self):
         klaviyo_calls = []
+        klaviyo_events = []
 
         attio = types.SimpleNamespace(
             get_or_create_attio_stage_1_lead=lambda **kwargs: {
@@ -703,7 +787,11 @@ class ValuationRequestTests(unittest.TestCase):
             upsert_profile_from_attio_contact=lambda **kwargs: klaviyo_calls.append(
                 kwargs
             )
-            or {"status": "success", "integration_log_id": 42}
+            or {"status": "success", "integration_log_id": 42},
+            create_stage_1_completed_event=lambda **kwargs: klaviyo_events.append(
+                kwargs
+            )
+            or {"status": "success", "metric": "Rootle Stage 1 Completed"},
         )
 
         with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
@@ -724,6 +812,10 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertIs(data["marketing_consent"], True)
         self.assertEqual(data["klaviyo_sync"]["status"], "success")
         self.assertEqual(
+            data["klaviyo_event_sync"],
+            {"status": "success", "metric": "Rootle Stage 1 Completed"},
+        )
+        self.assertEqual(
             klaviyo_calls[0],
             {
                 "email": "jane@example.com",
@@ -736,6 +828,18 @@ class ValuationRequestTests(unittest.TestCase):
                     "posthog_distinct_id": "ph_stage_1",
                     "marketing_consent": True,
                 },
+            },
+        )
+        self.assertEqual(
+            klaviyo_events[0],
+            {
+                "attio_person_record_id": "person_stage_1",
+                "email": "jane@example.com",
+                "phone_number": "+447123456789",
+                "first_name": "Jane",
+                "last_name": "Smith",
+                "posthog_distinct_id": "ph_stage_1",
+                "marketing_consent": True,
             },
         )
 
@@ -946,20 +1050,35 @@ class ValuationRequestTests(unittest.TestCase):
     def test_mev_calculation_updates_latest_snapshot_and_keeps_history(self):
         attio_mev_updates = []
         klaviyo_mev_events = []
+        attio_postage_opportunities = []
+        klaviyo_postage_objects = []
 
         def update_attio_valuation_request_mev(**kwargs):
             attio_mev_updates.append(kwargs)
             return kwargs["valuation_request_id"]
 
+        def create_attio_postage_opportunity(**kwargs):
+            attio_postage_opportunities.append(kwargs)
+            return {
+                "record_id": "po_mev_attio",
+                "barcode_value": "po_mev_attio",
+                "qr_payload": "po_mev_attio",
+            }
+
         attio = types.SimpleNamespace(
             create_attio_valuation_request=lambda **kwargs: "vr_mev",
             update_attio_valuation_request_mev=update_attio_valuation_request_mev,
+            create_attio_postage_opportunity=create_attio_postage_opportunity,
         )
         klaviyo = types.SimpleNamespace(
             create_mev_calculated_event=lambda **kwargs: klaviyo_mev_events.append(
                 kwargs
             )
             or {"status": "success", "metric": "Rootle MEV Calculated"},
+            sync_postage_opportunity_object=lambda **kwargs: klaviyo_postage_objects.append(
+                kwargs
+            )
+            or {"status": "success", "data_source_id": "ds_postage"},
         )
 
         with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
@@ -1039,6 +1158,45 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(
             data["klaviyo_sync"],
             {"status": "success", "metric": "Rootle MEV Calculated"},
+        )
+        self.assertEqual(len(attio_postage_opportunities), 1)
+        self.assertEqual(
+            attio_postage_opportunities[0]["person_record_id"],
+            "person_mev",
+        )
+        self.assertEqual(
+            attio_postage_opportunities[0]["valuation_request_id"],
+            "vr_mev",
+        )
+        self.assertEqual(
+            attio_postage_opportunities[0]["rootle_request_id"],
+            "request_mev",
+        )
+        self.assertEqual(
+            attio_postage_opportunities[0]["rootle_postage_opportunity_id"],
+            "postage-request_mev",
+        )
+        self.assertEqual(
+            attio_postage_opportunities[0]["triggered_by"],
+            "klaviyo_mev_calculated",
+        )
+        self.assertEqual(len(klaviyo_postage_objects), 2)
+        self.assertEqual(
+            klaviyo_postage_objects[-1]["attio_person_record_id"],
+            "person_mev",
+        )
+        self.assertEqual(
+            klaviyo_postage_objects[-1]["crm_postage_opportunity_id"],
+            "po_mev_attio",
+        )
+        self.assertEqual(
+            klaviyo_postage_objects[-1]["rootle_postage_opportunity_id"],
+            "postage-request_mev",
+        )
+        self.assertFalse(data["postage_opportunity_sync"]["postage_opportunity_created"])
+        self.assertEqual(
+            data["postage_opportunity_sync"]["klaviyo_object_sync"],
+            {"status": "success", "data_source_id": "ds_postage"},
         )
 
     def test_mev_calculation_requires_amount_and_range(self):

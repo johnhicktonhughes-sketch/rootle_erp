@@ -17,6 +17,9 @@ KLAVIYO_ROOTLE_CONTACT_LIST_ID = "RWb2ew"
 KLAVIYO_STAGE_PROPERTY = "rootle_stage"
 KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED = "indicative_offer_started"
 KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED = "indicative_offer_completed"
+KLAVIYO_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
+KLAVIYO_STAGE_1_COMPLETED_METRIC = "Rootle Stage 1 Completed"
+KLAVIYO_STAGE_2_COMPLETED_METRIC = "Rootle Stage 2 Completed"
 KLAVIYO_MEV_CALCULATED_METRIC = "Rootle MEV Calculated"
 
 
@@ -38,6 +41,10 @@ def _base_url() -> str:
 
 def _revision() -> str:
     return _config_value("KLAVIYO_API_REVISION", "2026-04-15") or "2026-04-15"
+
+
+def _postage_opportunity_data_source_id() -> str | None:
+    return _config_value("KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID")
 
 
 def _headers() -> dict:
@@ -203,6 +210,33 @@ def _email_subscription_payload(*, email: str, list_id: str) -> dict:
     }
 
 
+def _data_source_record_bulk_payload(*, data_source_id: str, records: list[dict]) -> dict:
+    return {
+        "data": {
+            "type": "data-source-record-bulk-create-job",
+            "attributes": {
+                "data-source-records": {
+                    "data": [
+                        {
+                            "type": "data-source-record",
+                            "attributes": {"record": record},
+                        }
+                        for record in records
+                    ]
+                }
+            },
+            "relationships": {
+                "data-source": {
+                    "data": {
+                        "type": "data-source",
+                        "id": data_source_id,
+                    }
+                }
+            },
+        }
+    }
+
+
 def add_profile_to_list(
     *,
     profile_id: str,
@@ -312,6 +346,230 @@ def upsert_profile_properties_by_attio_person(
         "integration_log_id": log.id,
         "response_status": response.status_code,
         "profile_id": _profile_id_from_response(response),
+    }
+
+
+def _create_event(
+    *,
+    metric_name: str,
+    attio_person_record_id: str,
+    external_id: str,
+    properties: dict,
+    value=None,
+    value_currency: str | None = None,
+    time: datetime | None = None,
+    unique_id: str | None = None,
+) -> dict:
+    payload = _event_payload(
+        metric_name=metric_name,
+        attio_person_record_id=attio_person_record_id,
+        properties={
+            key: value for key, value in properties.items() if value is not None
+        },
+        value=value,
+        value_currency=value_currency,
+        time=time,
+        unique_id=unique_id,
+    )
+
+    if not _api_key():
+        _record_klaviyo_result(
+            entity_type="event",
+            external_id=external_id,
+            payload=payload,
+            status="skipped",
+            message="KLAVIYO_API_KEY is not configured.",
+        )
+        return {"status": "skipped", "reason": "missing_api_key"}
+
+    response = requests.post(
+        f"{_base_url()}/api/events",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="event",
+        external_id=external_id,
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+        "metric": metric_name,
+    }
+
+
+def create_stage_1_completed_event(
+    *,
+    attio_person_record_id: str,
+    email: str,
+    phone_number: str,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    posthog_distinct_id: str | None = None,
+    marketing_consent: bool | None = None,
+    occurred_at: datetime | None = None,
+) -> dict:
+    occurred_at = occurred_at or datetime.utcnow()
+    properties = {
+        "form_stage": "stage_1",
+        "rootle_stage": KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED,
+        "attio_person_record_id": attio_person_record_id,
+        "email": email,
+        "phone_number": phone_number,
+        "first_name": first_name,
+        "last_name": last_name,
+        "posthog_distinct_id": posthog_distinct_id,
+        "marketing_consent": marketing_consent,
+    }
+    return _create_event(
+        metric_name=KLAVIYO_STAGE_1_COMPLETED_METRIC,
+        attio_person_record_id=attio_person_record_id,
+        external_id=attio_person_record_id,
+        properties=properties,
+        time=occurred_at,
+        unique_id=f"rootle-stage-1-{attio_person_record_id}-{occurred_at.isoformat()}",
+    )
+
+
+def create_stage_2_completed_event(
+    *,
+    attio_person_record_id: str,
+    valuation_id: int,
+    rootle_request_id: str,
+    crm_valuation_request_id: str | None = None,
+    item_categories: list | None = None,
+    item_photo_url: str | None = None,
+    valuation_guide_id: str | None = None,
+    valuation_guide_url: str | None = None,
+    posthog_distinct_id: str | None = None,
+    source: str | None = None,
+    occurred_at: datetime | None = None,
+) -> dict:
+    occurred_at = occurred_at or datetime.utcnow()
+    properties = {
+        "form_stage": "stage_2",
+        "rootle_stage": KLAVIYO_STAGE_ITEM_DETAILS_AVAILABLE,
+        "erp_valuation_id": valuation_id,
+        "rootle_request_id": rootle_request_id,
+        "crm_valuation_request_id": crm_valuation_request_id,
+        "item_categories": item_categories or [],
+        "item_photo_url": item_photo_url,
+        "valuation_guide_id": valuation_guide_id,
+        "valuation_guide_url": valuation_guide_url,
+        "posthog_distinct_id": posthog_distinct_id,
+        "source": source,
+    }
+    return _create_event(
+        metric_name=KLAVIYO_STAGE_2_COMPLETED_METRIC,
+        attio_person_record_id=attio_person_record_id,
+        external_id=rootle_request_id,
+        properties=properties,
+        time=occurred_at,
+        unique_id=f"rootle-stage-2-{rootle_request_id}",
+    )
+
+
+def sync_postage_opportunity_object(
+    *,
+    attio_person_record_id: str,
+    erp_postage_opportunity_id: int,
+    crm_postage_opportunity_id: str,
+    rootle_postage_opportunity_id: str,
+    rootle_request_id: str,
+    crm_valuation_request_id: str,
+    status: str,
+    barcode_value: str,
+    qr_payload: str,
+    triggered_at: datetime,
+    triggered_by: str | None = None,
+    latest_mev_amount=None,
+    latest_mev_currency: str | None = None,
+    item_categories: list | None = None,
+    item_photo_url: str | None = None,
+) -> dict:
+    record = {
+        "object_record": {
+            "id": rootle_postage_opportunity_id,
+            "erp_postage_opportunity_id": erp_postage_opportunity_id,
+            "crm_postage_opportunity_id": crm_postage_opportunity_id,
+            "rootle_postage_opportunity_id": rootle_postage_opportunity_id,
+            "rootle_request_id": rootle_request_id,
+            "crm_valuation_request_id": crm_valuation_request_id,
+            "status": status,
+            "barcode_value": barcode_value,
+            "qr_payload": qr_payload,
+            "triggered_at": triggered_at.isoformat(),
+            "triggered_by": triggered_by,
+            "latest_mev_amount": (
+                float(latest_mev_amount) if latest_mev_amount is not None else None
+            ),
+            "latest_mev_currency": latest_mev_currency,
+            "item_categories": ", ".join(item_categories or []),
+            "item_photo_url": item_photo_url,
+        },
+        "relationships": {
+            "external_id": attio_person_record_id,
+        },
+    }
+    payload = _data_source_record_bulk_payload(
+        data_source_id=_postage_opportunity_data_source_id() or "",
+        records=[record],
+    )
+
+    if not _api_key():
+        _record_klaviyo_result(
+            entity_type="postage_opportunity_object",
+            external_id=rootle_postage_opportunity_id,
+            payload=payload,
+            status="skipped",
+            message="KLAVIYO_API_KEY is not configured.",
+        )
+        return {"status": "skipped", "reason": "missing_api_key"}
+
+    data_source_id = _postage_opportunity_data_source_id()
+    if not data_source_id:
+        _record_klaviyo_result(
+            entity_type="postage_opportunity_object",
+            external_id=rootle_postage_opportunity_id,
+            payload=payload,
+            status="skipped",
+            message="KLAVIYO_POSTAGE_OPPORTUNITY_DATA_SOURCE_ID is not configured.",
+        )
+        return {"status": "skipped", "reason": "missing_data_source_id"}
+
+    response = requests.post(
+        f"{_base_url()}/api/data-source-record-bulk-create-jobs",
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    log = _record_klaviyo_result(
+        entity_type="postage_opportunity_object",
+        external_id=rootle_postage_opportunity_id,
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise KlaviyoError(
+            f"Klaviyo API returned {response.status_code}: {response.text}"
+        )
+
+    return {
+        "status": "success",
+        "integration_log_id": log.id,
+        "response_status": response.status_code,
+        "data_source_id": data_source_id,
     }
 
 
