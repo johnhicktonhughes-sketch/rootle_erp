@@ -18,9 +18,14 @@ KLAVIYO_STAGE_PROPERTY = "rootle_stage"
 KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED = "indicative_offer_started"
 KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED = "indicative_offer_completed"
 KLAVIYO_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
-KLAVIYO_STAGE_1_COMPLETED_METRIC = "Rootle Stage 1 Completed"
-KLAVIYO_STAGE_2_COMPLETED_METRIC = "Rootle Stage 2 Completed"
-KLAVIYO_MEV_CALCULATED_METRIC = "Rootle MEV Calculated"
+# Event/metric names. Klaviyo tracks metrics and profile properties in
+# separate namespaces, so KLAVIYO_STAGE_1_COMPLETED_METRIC sharing a string
+# with the rootle_stage property above is intentional — both mark the same
+# real-world moment (step 1 submitted), likewise for the MEV metric below
+# sharing a string with KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED.
+KLAVIYO_STAGE_1_COMPLETED_METRIC = KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED
+KLAVIYO_STAGE_2_COMPLETED_METRIC = "image_uploaded"
+KLAVIYO_MEV_CALCULATED_METRIC = KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED
 
 
 def _config_value(key: str, default: str | None = None) -> str | None:

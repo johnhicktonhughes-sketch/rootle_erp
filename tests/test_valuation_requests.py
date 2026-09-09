@@ -92,7 +92,7 @@ class ValuationRequestTests(unittest.TestCase):
             create_stage_2_completed_event=lambda **kwargs: klaviyo_events.append(
                 kwargs
             )
-            or {"status": "success", "metric": "Rootle Stage 2 Completed"},
+            or {"status": "success", "metric": "image_uploaded"},
         )
 
         with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
@@ -115,7 +115,7 @@ class ValuationRequestTests(unittest.TestCase):
         valuation_id = data["valuation"]["id"]
         self.assertEqual(
             data["klaviyo_event_sync"],
-            {"status": "success", "metric": "Rootle Stage 2 Completed"},
+            {"status": "success", "metric": "image_uploaded"},
         )
         self.assertEqual(len(klaviyo_events), 1)
         self.assertEqual(klaviyo_events[0]["attio_person_record_id"], "person_stage_2")
@@ -366,7 +366,7 @@ class ValuationRequestTests(unittest.TestCase):
 
         calculated_at = datetime(2026, 6, 20, 12, 0, 0)
         payload = _event_payload(
-            metric_name="Rootle MEV Calculated",
+            metric_name="indicative_offer_completed",
             attio_person_record_id="person_mev",
             properties={"rootle_request_id": "request_mev"},
             value=90.0,
@@ -379,7 +379,7 @@ class ValuationRequestTests(unittest.TestCase):
         attributes = payload["data"]["attributes"]
         self.assertEqual(
             attributes["metric"]["data"]["attributes"]["name"],
-            "Rootle MEV Calculated",
+            "indicative_offer_completed",
         )
         self.assertEqual(
             attributes["profile"]["data"]["attributes"]["external_id"],
@@ -791,7 +791,7 @@ class ValuationRequestTests(unittest.TestCase):
             create_stage_1_completed_event=lambda **kwargs: klaviyo_events.append(
                 kwargs
             )
-            or {"status": "success", "metric": "Rootle Stage 1 Completed"},
+            or {"status": "success", "metric": "indicative_offer_started"},
         )
 
         with patch.dict(sys.modules, {"attio": attio, "klaviyo": klaviyo}):
@@ -813,7 +813,7 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(data["klaviyo_sync"]["status"], "success")
         self.assertEqual(
             data["klaviyo_event_sync"],
-            {"status": "success", "metric": "Rootle Stage 1 Completed"},
+            {"status": "success", "metric": "indicative_offer_started"},
         )
         self.assertEqual(
             klaviyo_calls[0],
@@ -1074,7 +1074,7 @@ class ValuationRequestTests(unittest.TestCase):
             create_mev_calculated_event=lambda **kwargs: klaviyo_mev_events.append(
                 kwargs
             )
-            or {"status": "success", "metric": "Rootle MEV Calculated"},
+            or {"status": "success", "metric": "indicative_offer_completed"},
             sync_postage_opportunity_object=lambda **kwargs: klaviyo_postage_objects.append(
                 kwargs
             )
@@ -1157,7 +1157,7 @@ class ValuationRequestTests(unittest.TestCase):
         self.assertEqual(klaviyo_mev_events[-1]["pricing_status"], "mev_calculated")
         self.assertEqual(
             data["klaviyo_sync"],
-            {"status": "success", "metric": "Rootle MEV Calculated"},
+            {"status": "success", "metric": "indicative_offer_completed"},
         )
         self.assertEqual(len(attio_postage_opportunities), 1)
         self.assertEqual(

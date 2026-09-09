@@ -629,7 +629,7 @@ def _sync_mev_triggered_postage_opportunity(*, valuation, klaviyo_sync):
             valuation=valuation,
             rootle_postage_opportunity_id=f"postage-{valuation.rootle_request_id}",
             triggered_by="klaviyo_mev_calculated",
-            notes="Created after Rootle MEV Calculated event was sent to Klaviyo.",
+            notes="Created after indicative_offer_completed event was sent to Klaviyo.",
         )
         db.session.commit()
     except Exception as exc:

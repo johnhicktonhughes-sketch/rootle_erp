@@ -444,7 +444,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests/{valuation_id}/mev-calculations": {
             "post": {
                 "summary": "Create an MEV calculation",
-                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot/range on the ERP valuation, mirrors the latest amount, currency, margin, range, pricing request id, status, and timestamp to Attio, then posts a Rootle MEV Calculated event to Klaviyo. The request must include amount, mev_low, and mev_high; margin defaults to PRICING_DEFAULT_MARGIN when omitted.",
+                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot/range on the ERP valuation, mirrors the latest amount, currency, margin, range, pricing request id, status, and timestamp to Attio, then posts an \"indicative_offer_completed\" event to Klaviyo. The request must include amount, mev_low, and mev_high; margin defaults to PRICING_DEFAULT_MARGIN when omitted.",
                 "parameters": [
                     {
                         "name": "valuation_id",
@@ -497,7 +497,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests/request-mev-calculation": {
             "post": {
                 "summary": "Trigger pricing API MEV calculation",
-                "description": "Called by an Attio workflow when valuation_requests.pricing_status changes to requested_mev_calculation. Calls the Rootle Pricing API /predict endpoint, stores ensemble_total_prediction as the latest MEV, stores the prediction range and pricing id, mirrors the latest MEV back to Attio, and posts a Rootle MEV Calculated event to Klaviyo.",
+                "description": "Called by an Attio workflow when valuation_requests.pricing_status changes to requested_mev_calculation. Calls the Rootle Pricing API /predict endpoint, stores ensemble_total_prediction as the latest MEV, stores the prediction range and pricing id, mirrors the latest MEV back to Attio, and posts an \"indicative_offer_completed\" event to Klaviyo.",
                 "requestBody": {
                     "required": True,
                     "content": {
