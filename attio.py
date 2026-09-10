@@ -472,6 +472,18 @@ ROOTLE_PERSON_CONTACT_ATTRIBUTES = (
         "type": "checkbox",
     },
 )
+ROOTLE_THANK_YOU_FEEDBACK_ATTRIBUTES = (
+    {
+        "title": "Rootle Heard About Us",
+        "api_slug": "rootle_heard_about_us",
+        "description": "Where the customer said they heard about Rootle, captured on the thank-you page.",
+    },
+    {
+        "title": "Rootle Inspiration",
+        "api_slug": "rootle_inspiration",
+        "description": "What the customer said inspired them to use Rootle, captured on the thank-you page.",
+    },
+)
 MARKETING_META_TO_ATTIO = {
     "lead_source": "rootle_lead_source",
     "original_source": "rootle_original_source",
@@ -800,6 +812,22 @@ def _person_contact_values(
     return values
 
 
+def _thank_you_feedback_values(
+    *,
+    heard_about_us: str | None = None,
+    inspiration: str | None = None,
+) -> dict:
+    optional_values = {
+        "rootle_heard_about_us": heard_about_us,
+        "rootle_inspiration": inspiration,
+    }
+    return {
+        key: str(value).strip()
+        for key, value in optional_values.items()
+        if value is not None and str(value).strip()
+    }
+
+
 def _attio_request(method: str, path: str, **kwargs) -> requests.Response:
     return requests.request(
         method,
@@ -1092,6 +1120,23 @@ def ensure_person_contact_attributes() -> list[dict]:
     ensured = []
 
     for attribute in ROOTLE_PERSON_CONTACT_ATTRIBUTES:
+        existing = existing_by_slug.get(attribute["api_slug"])
+        if existing:
+            ensured.append(existing)
+            continue
+
+        ensured.append(_create_person_attribute(attribute))
+
+    return ensured
+
+
+@lru_cache(maxsize=1)
+def ensure_thank_you_feedback_attributes() -> list[dict]:
+    attributes = _list_attio_attributes()
+    existing_by_slug = {attribute.get("api_slug"): attribute for attribute in attributes}
+    ensured = []
+
+    for attribute in ROOTLE_THANK_YOU_FEEDBACK_ATTRIBUTES:
         existing = existing_by_slug.get(attribute["api_slug"])
         if existing:
             ensured.append(existing)
@@ -1728,6 +1773,39 @@ def update_attio_person_contact_details(
     )
     _record_attio_result(
         entity_type="person_contact_details",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return person_record_id
+
+
+def update_attio_person_thank_you_feedback(
+    *,
+    person_record_id: str,
+    heard_about_us: str | None = None,
+    inspiration: str | None = None,
+) -> str:
+    ensure_thank_you_feedback_attributes()
+    values = _thank_you_feedback_values(
+        heard_about_us=heard_about_us,
+        inspiration=inspiration,
+    )
+    if not values:
+        return person_record_id
+
+    payload = {"data": {"values": values}}
+    response = requests.patch(
+        _attio_url(f"objects/{ATTIO_OBJECT_SLUG}/records/{person_record_id}"),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="person_thank_you_feedback",
         payload=payload,
         response=response,
     )

@@ -30,6 +30,7 @@ def _warm_attio_schema_cache(app):
         attio.ensure_stage_attribute,
         attio.ensure_marketing_attribution_attributes,
         attio.ensure_person_contact_attributes,
+        attio.ensure_thank_you_feedback_attributes,
         attio.ensure_valuation_request_object,
     ):
         try:

@@ -2320,6 +2320,52 @@ def submit_contact_details():
     )
 
 
+@crm_bp.route("/crm/thank-you-feedback", methods=["POST"])
+def submit_thank_you_feedback():
+    payload = request.get_json() or {}
+    person_record_id = (
+        _required_string(payload, "attio_id")
+        or _required_string(payload, "crm_person_record_id")
+        or _required_string(payload, "crm_record_id")
+    )
+    heard_about_us = _required_string(payload, "heard_about_us")
+    inspiration = _required_string(payload, "inspiration")
+
+    if not person_record_id:
+        return jsonify({"error": "missing_required_fields", "fields": ["attio_id"]}), 400
+
+    if not any([heard_about_us, inspiration]):
+        return (
+            jsonify(
+                {
+                    "error": "missing_required_fields",
+                    "fields": ["heard_about_us", "inspiration"],
+                }
+            ),
+            400,
+        )
+
+    try:
+        from attio import update_attio_person_thank_you_feedback
+
+        update_attio_person_thank_you_feedback(
+            person_record_id=person_record_id,
+            heard_about_us=heard_about_us,
+            inspiration=inspiration,
+        )
+    except Exception as exc:
+        return jsonify({"error": "crm_sync_failed", "message": str(exc)}), 502
+
+    return jsonify(
+        {
+            "attio_id": person_record_id,
+            "crm_person_record_id": person_record_id,
+            "heard_about_us": heard_about_us,
+            "inspiration": inspiration,
+        }
+    )
+
+
 @crm_bp.route("/leads", methods=["POST"])
 def create_lead():
     payload = request.get_json() or {}
