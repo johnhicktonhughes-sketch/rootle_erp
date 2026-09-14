@@ -26,6 +26,7 @@ KLAVIYO_STAGE_ITEM_DETAILS_AVAILABLE = "item_details_available"
 KLAVIYO_STAGE_1_COMPLETED_METRIC = KLAVIYO_STAGE_INDICATIVE_OFFER_STARTED
 KLAVIYO_STAGE_2_COMPLETED_METRIC = "image_uploaded"
 KLAVIYO_MEV_CALCULATED_METRIC = KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED
+KLAVIYO_ADDRESS_COMPLETED_METRIC = "Address_completed"
 
 
 def _config_value(key: str, default: str | None = None) -> str | None:
@@ -481,6 +482,42 @@ def create_stage_2_completed_event(
         properties=properties,
         time=occurred_at,
         unique_id=f"rootle-stage-2-{rootle_request_id}",
+    )
+
+
+def create_address_completed_event(
+    *,
+    attio_person_record_id: str,
+    rootle_request_id: str,
+    crm_valuation_request_id: str | None = None,
+    address_line_1: str | None = None,
+    address_line_2: str | None = None,
+    city: str | None = None,
+    postcode: str | None = None,
+    country: str | None = None,
+    posthog_distinct_id: str | None = None,
+    occurred_at: datetime | None = None,
+) -> dict:
+    occurred_at = occurred_at or datetime.utcnow()
+    properties = {
+        "form_stage": "stage_3",
+        "rootle_stage": KLAVIYO_STAGE_INDICATIVE_OFFER_COMPLETED,
+        "rootle_request_id": rootle_request_id,
+        "crm_valuation_request_id": crm_valuation_request_id,
+        "address_line_1": address_line_1,
+        "address_line_2": address_line_2,
+        "city": city,
+        "postcode": postcode,
+        "country": country,
+        "posthog_distinct_id": posthog_distinct_id,
+    }
+    return _create_event(
+        metric_name=KLAVIYO_ADDRESS_COMPLETED_METRIC,
+        attio_person_record_id=attio_person_record_id,
+        external_id=rootle_request_id,
+        properties=properties,
+        time=occurred_at,
+        unique_id=f"rootle-address-completed-{rootle_request_id}",
     )
 
 

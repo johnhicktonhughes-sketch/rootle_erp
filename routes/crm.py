@@ -520,6 +520,22 @@ def _sync_stage_2_to_klaviyo_event(*, valuation):
     )
 
 
+def _sync_address_completed_to_klaviyo_event(*, valuation):
+    from klaviyo import create_address_completed_event
+
+    return create_address_completed_event(
+        attio_person_record_id=valuation.crm_person_record_id,
+        rootle_request_id=valuation.rootle_request_id,
+        crm_valuation_request_id=valuation.crm_valuation_request_id,
+        address_line_1=valuation.address_line_1,
+        address_line_2=valuation.address_line_2,
+        city=valuation.city,
+        postcode=valuation.postcode,
+        country=valuation.country,
+        posthog_distinct_id=valuation.posthog_distinct_id,
+    )
+
+
 def _sync_postage_opportunity_to_klaviyo_object(*, opportunity):
     from klaviyo import sync_postage_opportunity_object
 
@@ -2309,12 +2325,22 @@ def submit_contact_details():
             "message": str(exc),
         }
 
+    klaviyo_event_syncs = []
+    for valuation in valuations:
+        try:
+            klaviyo_event_syncs.append(
+                _sync_address_completed_to_klaviyo_event(valuation=valuation)
+            )
+        except Exception as exc:
+            klaviyo_event_syncs.append({"status": "failed", "message": str(exc)})
+
     return jsonify(
         {
             "attio_id": person_record_id,
             "crm_person_record_id": person_record_id,
             "marketing_consent": marketing_consent,
             "klaviyo_sync": klaviyo_sync,
+            "klaviyo_event_sync": klaviyo_event_syncs,
             "updated_erp_valuations": [_valuation_to_dict(item) for item in valuations],
         }
     )
