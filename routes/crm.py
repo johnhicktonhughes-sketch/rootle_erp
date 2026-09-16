@@ -117,6 +117,23 @@ def _string_list(payload, *keys):
     return None
 
 
+def _item_subcategories_payload(payload):
+    raw = payload.get("item_subcategories")
+    if not isinstance(raw, dict):
+        return None
+
+    cleaned = {}
+    for key, value in raw.items():
+        category = _category_slug(key)
+        if not category:
+            continue
+        options = _string_list({"options": value}, "options")
+        if options:
+            cleaned[category] = options
+
+    return cleaned or None
+
+
 def _split_customer_name(name):
     parts = str(name or "").strip().split()
     if not parts:
@@ -1232,6 +1249,7 @@ def submit_item_for_valuation():
     source = _required_string(payload, "source") or "lovable"
     valuation_guide_id = _required_string(payload, "valuation_guide_id")
     valuation_guide_url = _required_string(payload, "valuation_guide_url")
+    item_subcategories = _item_subcategories_payload(payload)
     normalised_payload = {
         "crm_person_record_id": person_record_id,
         "item_categories": item_categories,
@@ -1241,6 +1259,7 @@ def submit_item_for_valuation():
         "source": source,
         "valuation_guide_id": valuation_guide_id,
         "valuation_guide_url": valuation_guide_url,
+        "item_subcategories": item_subcategories,
         "metadata": payload.get("metadata"),
     }
 
@@ -1288,6 +1307,7 @@ def submit_item_for_valuation():
         erp_valuation_updated = (
             merged_categories != (existing.item_categories or [])
             or posthog_valuation_updated
+            or bool(item_subcategories)
         )
         if erp_valuation_updated or posthog_distinct_id:
             try:
@@ -1303,6 +1323,7 @@ def submit_item_for_valuation():
                     valuation_guide_id=existing.valuation_guide_id,
                     valuation_guide_url=existing.valuation_guide_url,
                     source=existing.source,
+                    item_subcategories=item_subcategories,
                 )
                 _sync_person_posthog_distinct_id(
                     person_record_id=existing.crm_person_record_id,
@@ -1359,6 +1380,7 @@ def submit_item_for_valuation():
             valuation_guide_id=valuation_guide_id,
             valuation_guide_url=valuation_guide_url,
             source=source,
+            item_subcategories=item_subcategories,
         )
     except Exception as exc:
         failed_submission = _record_failed_valuation_request_submission(
@@ -1624,6 +1646,7 @@ def retry_failed_valuation_request_submission(submission_id):
             valuation_guide_id=normalised_payload.get("valuation_guide_id"),
             valuation_guide_url=normalised_payload.get("valuation_guide_url"),
             source=normalised_payload.get("source"),
+            item_subcategories=normalised_payload.get("item_subcategories"),
         )
     except Exception as exc:
         db.session.rollback()

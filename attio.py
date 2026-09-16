@@ -91,6 +91,16 @@ VALUATION_REQUEST_ATTRIBUTES = (
         "config": {},
     },
     {
+        "title": "Item Subcategories",
+        "api_slug": "item_subcategories",
+        "description": "Sub-option answers per item category submitted in Stage 2, e.g. jewellery material type.",
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    },
+    {
         "title": "Item Photo URL",
         "api_slug": "item_photo_url",
         "description": "URL of the item photo submitted in Stage 2.",
@@ -688,6 +698,18 @@ def _stage_1_values(
     return values
 
 
+def _format_item_subcategories(item_subcategories: dict[str, list[str]] | None) -> str | None:
+    if not item_subcategories:
+        return None
+
+    parts = [
+        f"{category}: {', '.join(options)}"
+        for category, options in item_subcategories.items()
+        if options
+    ]
+    return "; ".join(parts) or None
+
+
 def _valuation_request_values(
     *,
     person_record_id: str,
@@ -698,6 +720,7 @@ def _valuation_request_values(
     valuation_guide_id: str | None = None,
     valuation_guide_url: str | None = None,
     source: str | None = None,
+    item_subcategories: dict[str, list[str]] | None = None,
 ) -> dict:
     values = {
         "request_title": f"Valuation request {rootle_request_id}",
@@ -719,6 +742,7 @@ def _valuation_request_values(
         "valuation_guide_id": valuation_guide_id,
         "valuation_guide_url": valuation_guide_url,
         "source": source,
+        "item_subcategories": _format_item_subcategories(item_subcategories),
     }
     values.update(
         {
@@ -1487,6 +1511,7 @@ def create_attio_valuation_request(
     valuation_guide_id: str | None = None,
     valuation_guide_url: str | None = None,
     source: str | None = None,
+    item_subcategories: dict[str, list[str]] | None = None,
 ) -> str:
     if _sync_schema_on_write():
         ensure_valuation_request_item_options(item_categories)
@@ -1501,6 +1526,7 @@ def create_attio_valuation_request(
                 valuation_guide_id=valuation_guide_id,
                 valuation_guide_url=valuation_guide_url,
                 source=source,
+                item_subcategories=item_subcategories,
             )
         }
     }
@@ -1536,6 +1562,7 @@ def update_attio_valuation_request(
     valuation_guide_id: str | None = None,
     valuation_guide_url: str | None = None,
     source: str | None = None,
+    item_subcategories: dict[str, list[str]] | None = None,
 ) -> str | None:
     if not valuation_request_id:
         return valuation_request_id
@@ -1553,6 +1580,7 @@ def update_attio_valuation_request(
                 valuation_guide_id=valuation_guide_id,
                 valuation_guide_url=valuation_guide_url,
                 source=source,
+                item_subcategories=item_subcategories,
             )
         }
     }
