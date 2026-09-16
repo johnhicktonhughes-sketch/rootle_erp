@@ -444,7 +444,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests/{valuation_id}/mev-calculations": {
             "post": {
                 "summary": "Create an MEV calculation",
-                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot/range on the ERP valuation, mirrors the latest amount, currency, margin, range, pricing request id, status, and timestamp to Attio, then posts an \"indicative_offer_completed\" event to Klaviyo. The request must include amount, mev_low, and mev_high; margin defaults to PRICING_DEFAULT_MARGIN when omitted.",
+                "description": "Stores an auditable MEV calculation, updates the latest MEV snapshot/range on the ERP valuation, mirrors the latest amount, currency, margin, range, pricing request id, status, and timestamp to Attio, then posts an \"indicative_offer_completed\" event to Klaviyo. The request must include value_low and value_high. MEV bounds and the midpoint amount are calculated as (1 - margin) times the original values. Margin defaults to PRICING_DEFAULT_MARGIN (0.5).",
                 "parameters": [
                     {
                         "name": "valuation_id",
@@ -459,16 +459,14 @@ OPENAPI_SPEC = {
                         "application/json": {
                             "schema": {
                                 "type": "object",
-                                "required": ["amount", "mev_low", "mev_high"],
+                                "required": ["value_low", "value_high"],
                                 "properties": {
-                                    "amount": {"type": "number"},
-                                    "ensemble_total_prediction": {"type": "number"},
-                                    "mev_low": {"type": "number"},
-                                    "mev_high": {"type": "number"},
+                                    "value_low": {"type": "number", "minimum": 0},
+                                    "value_high": {"type": "number", "minimum": 0},
                                     "low_total_prediction": {"type": "number"},
                                     "high_total_prediction": {"type": "number"},
                                     "currency": {"type": "string"},
-                                    "margin": {"type": "number"},
+                                    "margin": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5},
                                     "pricing_request_id": {"type": "string"},
                                     "pricing_result_id": {
                                         "oneOf": [
@@ -497,7 +495,7 @@ OPENAPI_SPEC = {
         "/api/crm/valuation-requests/request-mev-calculation": {
             "post": {
                 "summary": "Trigger pricing API MEV calculation",
-                "description": "Called by an Attio workflow when valuation_requests.pricing_status changes to requested_mev_calculation. Calls the Rootle Pricing API /predict endpoint, stores ensemble_total_prediction as the latest MEV, stores the prediction range and pricing id, mirrors the latest MEV back to Attio, and posts an \"indicative_offer_completed\" event to Klaviyo.",
+                "description": "Called by an Attio workflow when valuation_requests.pricing_status changes to requested_mev_calculation. Calls the Rootle Pricing API /predict endpoint, applies the margin to the returned value range and its midpoint to calculate MEV, stores the original values and pricing id, mirrors the latest MEV back to Attio, and posts an \"indicative_offer_completed\" event to Klaviyo.",
                 "requestBody": {
                     "required": True,
                     "content": {
@@ -521,7 +519,7 @@ OPENAPI_SPEC = {
                                     },
                                     "declared_features": {"type": "object"},
                                     "currency": {"type": "string", "default": "GBP"},
-                                    "margin": {"type": "number"},
+                                    "margin": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5},
                                 },
                             }
                         }
@@ -1107,13 +1105,12 @@ DOCS_HTML = """<!doctype html>
         <span class="method post">POST</span>
         <div>
           <h3><code>/api/crm/valuation-requests/{valuation_id}/mev-calculations</code></h3>
-          <p class="meta">Store an audited MEV calculation with required low/high range and mirror the latest snapshot to Attio. Margin defaults to <code>PRICING_DEFAULT_MARGIN</code> when omitted.</p>
+          <p class="meta">Submit value_low and value_high; the ERP applies the margin to calculate the MEV range and midpoint amount, and mirrors the snapshot to Attio. Margin defaults to <code>PRICING_DEFAULT_MARGIN</code> (0.5).</p>
           <pre>{
-  "amount": 100.00,
-  "mev_low": 80.00,
-  "mev_high": 140.00,
+  "value_low": 160.00,
+  "value_high": 280.00,
   "currency": "GBP",
-  "margin": 0.25,
+  "margin": 0.5,
   "pricing_request_id": "pricing-result-or-request-id",
   "calculation_method": "manual",
   "calculated_by": "pricing-agent"

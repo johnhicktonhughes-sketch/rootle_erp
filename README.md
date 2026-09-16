@@ -212,11 +212,10 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 
 ```json
 {
-  "amount": 100.00,
-  "mev_low": 80.00,
-  "mev_high": 140.00,
+  "value_low": 160.00,
+  "value_high": 280.00,
   "currency": "GBP",
-  "margin": 0.25,
+  "margin": 0.5,
   "pricing_request_id": "pricing-result-or-request-id",
   "calculation_method": "manual",
   "calculated_by": "pricing-agent",
@@ -226,14 +225,30 @@ POST /api/crm/valuation-requests/{valuation_id}/mev-calculations
 }
 ```
 
-Required fields are `amount`, `mev_low`, and `mev_high`. `currency` defaults to
-`GBP`, and `margin` defaults to `PRICING_DEFAULT_MARGIN` when omitted.
+Required fields are `value_low` and `value_high` (original values before margin).
+`currency` defaults to `GBP`; `margin` defaults to `PRICING_DEFAULT_MARGIN`,
+whose default is `0.5`. Explicit environment configuration overrides this default.
+Margin must be between 0 and 1 inclusive, with at most four decimal places.
+Values must be finite, nonnegative, and ordered low to high.
 
-The endpoint also accepts the pricing API response shape directly. In that case,
-`ensemble_total_prediction` becomes the latest MEV amount, `range.total.low` and
-`range.total.high` become `mev_low` and `mev_high`, and `pricing_result_id` is
-stored as `pricing_request_id`. Flat `low_total_prediction`,
-`high_total_prediction`, and `pricing_request_id` fields are also accepted.
+The ERP calculates:
+
+- `value_median = (value_low + value_high) / 2` (the range midpoint).
+- `mev_low = (1 - margin) * value_low`.
+- `mev_high = (1 - margin) * value_high`.
+- `amount = (1 - margin) * value_median`, stored as `latest_mev_amount` on the case.
+
+Calculated money is rounded half-up to two decimal places. The example gives
+MEV £80–£140 with a midpoint amount of £110. Original values are retained on the
+case and each history row, and sent to Attio and Klaviyo alongside the MEV.
+Existing history is unchanged; its new source-value fields remain null.
+
+The endpoint also accepts original pricing ranges as `low_total_prediction` /
+`high_total_prediction`, `range.total.low` / `range.total.high`, or the equivalent
+`prediction_interval` fields. `pricing_result_id` maps to `pricing_request_id`.
+Clients must now supply original values rather than already discounted MEVs;
+submitted `amount`, `mev_low`, `mev_high`, and `ensemble_total_prediction` do not
+override the calculated results.
 
 Every call appends a row to `lead_valuation_mev_calculations`. The latest amount,
 currency, margin, calculation timestamp, MEV range, and pricing request id are
@@ -280,8 +295,8 @@ POST /api/crm/valuation-requests/request-mev-calculation
 ```
 
 The endpoint calls `PRICING_API_BASE_URL` `/predict` using `PRICING_API_KEY`
-when configured. It stores `ensemble_total_prediction` as the latest GBP MEV,
-stores `range.total.low`/`range.total.high` as the MEV range, maps
+when configured. It stores `range.total.low`/`range.total.high` as original values,
+applies the margin to the range and its midpoint to derive the MEV, maps
 `pricing_result_id` to `pricing_request_id`, uses `PRICING_DEFAULT_MARGIN`
 unless `margin` is supplied in the request, writes an audit row with the pricing
 request/response, and mirrors the latest MEV back to Attio.

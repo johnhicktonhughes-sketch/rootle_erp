@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import hmac
 import json
@@ -233,9 +233,46 @@ def _pricing_request_id_value(payload):
     return str(value).strip() or None
 
 
+def _mev_values(payload, margin):
+    """Convert original values into margin-adjusted MEVs using decimal arithmetic."""
+    values = {}
+    for side in ("low", "high"):
+        value = _pricing_decimal_value(
+            payload, f"value_{side}", f"{side}_total_prediction",
+            nested_paths=[("range", "total", side),
+                          ("prediction_interval", f"{side}_total_prediction")],
+        )
+        if value is None or not value.is_finite() or value < 0:
+            raise ValueError(f"value_{side} must be a finite number zero or greater")
+        values[f"value_{side}"] = value
+    if values["value_low"] > values["value_high"]:
+        raise ValueError("value_low must be less than or equal to value_high")
+    values["value_median"] = (values["value_low"] + values["value_high"]) / 2
+    for side in ("low", "high", "median"):
+        key = "amount" if side == "median" else f"mev_{side}"
+        values[key] = ((1 - margin) * values[f"value_{side}"]).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP,
+        )
+    for key in ("value_low", "value_high", "value_median"):
+        values[key] = values[key].quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return values
+
+
+def _mev_margin(payload):
+    if payload.get("margin") in (None, ""):
+        margin = _default_margin()
+    else:
+        margin = _decimal_value(payload, "margin")
+    if margin is None or not margin.is_finite() or not 0 <= margin <= 1:
+        raise ValueError("margin must be a finite number between 0 and 1")
+    if margin != margin.quantize(Decimal("0.0001")):
+        raise ValueError("margin supports at most four decimal places")
+    return margin
+
+
 def _default_margin():
     try:
-        return Decimal(str(current_app.config.get("PRICING_DEFAULT_MARGIN", "0")))
+        return Decimal(str(current_app.config.get("PRICING_DEFAULT_MARGIN", "0.5")))
     except (InvalidOperation, TypeError, ValueError):
         raise ValueError("PRICING_DEFAULT_MARGIN must be a decimal value.")
 
@@ -415,6 +452,9 @@ def _store_mev_calculation(
     *,
     valuation,
     amount,
+    value_low,
+    value_high,
+    value_median,
     currency,
     margin,
     calculation_method=None,
@@ -430,6 +470,9 @@ def _store_mev_calculation(
     calculation = LeadValuationMevCalculation(
         valuation=valuation,
         amount=amount,
+        value_low=value_low,
+        value_high=value_high,
+        value_median=value_median,
         currency=currency,
         margin=margin,
         mev_low=mev_low,
@@ -442,6 +485,9 @@ def _store_mev_calculation(
         inputs=inputs,
         meta=metadata,
     )
+    valuation.value_low = value_low
+    valuation.value_high = value_high
+    valuation.value_median = value_median
     valuation.latest_mev_amount = amount
     valuation.latest_mev_currency = currency
     valuation.latest_mev_margin = margin
@@ -460,6 +506,9 @@ def _store_mev_calculation(
     update_attio_valuation_request_mev(
         valuation_request_id=valuation.crm_valuation_request_id,
         amount=amount,
+        value_low=value_low,
+        value_high=value_high,
+        value_median=value_median,
         currency=currency,
         margin=margin,
         calculated_at=calculated_at,
@@ -479,6 +528,9 @@ def _sync_mev_calculation_to_klaviyo(*, valuation, calculation):
         valuation_id=valuation.id,
         rootle_request_id=valuation.rootle_request_id,
         amount=calculation.amount,
+        value_low=calculation.value_low,
+        value_high=calculation.value_high,
+        value_median=calculation.value_median,
         currency=calculation.currency,
         margin=calculation.margin,
         calculated_at=calculation.calculated_at,
@@ -1762,14 +1814,10 @@ def request_valuation_mev_calculation():
     if prediction_payload["max_value"] < 0:
         return jsonify({"error": "invalid_max_value", "message": "max_value must be zero or greater"}), 400
 
-    margin = _decimal_value(payload, "margin")
-    if margin is None:
-        try:
-            margin = _default_margin()
-        except ValueError as exc:
-            return jsonify({"error": "invalid_default_margin", "message": str(exc)}), 500
-    if margin < 0:
-        return jsonify({"error": "invalid_margin", "message": "margin must be zero or greater"}), 400
+    try:
+        margin = _mev_margin(payload)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_margin", "message": str(exc)}), 400
 
     currency = (_required_string(payload, "currency") or "GBP").upper()
     if len(currency) != 3 or not currency.isalpha():
@@ -1777,49 +1825,19 @@ def request_valuation_mev_calculation():
 
     try:
         prediction = _call_pricing_predict(prediction_payload)
-        amount = Decimal(str(prediction["ensemble_total_prediction"]))
-    except KeyError:
-        return (
-            jsonify(
-                {
-                    "error": "pricing_prediction_missing_amount",
-                    "message": "Pricing API response did not include ensemble_total_prediction.",
-                }
-            ),
-            502,
-        )
+        values = _mev_values(prediction, margin)
     except Exception as exc:
         db.session.rollback()
         return jsonify({"error": "pricing_prediction_failed", "message": str(exc)}), 502
 
-    mev_low = _pricing_decimal_value(
-        prediction,
-        "mev_low",
-        "low_total_prediction",
-        nested_paths=[
-            ("range", "total", "low"),
-            ("prediction_interval", "low_total_prediction"),
-        ],
-    )
-    mev_high = _pricing_decimal_value(
-        prediction,
-        "mev_high",
-        "high_total_prediction",
-        nested_paths=[
-            ("range", "total", "high"),
-            ("prediction_interval", "high_total_prediction"),
-        ],
-    )
     pricing_request_id = _pricing_request_id_value(prediction)
 
     try:
         calculation = _store_mev_calculation(
             valuation=valuation,
-            amount=amount,
+            **values,
             currency=currency,
             margin=margin,
-            mev_low=mev_low,
-            mev_high=mev_high,
             pricing_request_id=pricing_request_id,
             calculation_method=PRICING_API_CALCULATION_METHOD,
             calculated_by=_required_string(payload, "calculated_by") or "attio-workflow",
@@ -1866,75 +1884,29 @@ def request_valuation_mev_calculation():
 def add_valuation_mev_calculation(valuation_id):
     valuation = LeadValuation.query.get_or_404(valuation_id)
     payload = request.get_json() or {}
-    amount = _pricing_decimal_value(payload, "amount", "mev_amount", "ensemble_total_prediction")
     currency = (_required_string(payload, "currency") or "GBP").upper()
-    margin = _decimal_value(payload, "margin")
-    if margin is None:
-        try:
-            margin = _default_margin()
-        except ValueError as exc:
-            return jsonify({"error": "invalid_default_margin", "message": str(exc)}), 500
-    mev_low = _pricing_decimal_value(
-        payload,
-        "mev_low",
-        "low_total_prediction",
-        nested_paths=[
-            ("range", "total", "low"),
-            ("prediction_interval", "low_total_prediction"),
-        ],
-    )
-    mev_high = _pricing_decimal_value(
-        payload,
-        "mev_high",
-        "high_total_prediction",
-        nested_paths=[
-            ("range", "total", "high"),
-            ("prediction_interval", "high_total_prediction"),
-        ],
-    )
+    try:
+        margin = _mev_margin(payload)
+    except ValueError as exc:
+        return jsonify({"error": "invalid_margin", "message": str(exc)}), 400
+    try:
+        values = _mev_values(payload, margin)
+    except (ValueError, InvalidOperation) as exc:
+        return jsonify({"error": "invalid_value_range", "message": str(exc)}), 400
     pricing_request_id = _pricing_request_id_value(payload)
     calculation_method = _required_string(payload, "calculation_method")
     calculated_by = _required_string(payload, "calculated_by")
     notes = _required_string(payload, "notes")
 
-    missing_fields = [
-        field
-        for field, value in (
-            ("amount", amount),
-            ("mev_low", mev_low),
-            ("mev_high", mev_high),
-        )
-        if value is None or value == ""
-    ]
-    if missing_fields:
-        return jsonify({"error": "missing_required_fields", "fields": missing_fields}), 400
-
-    if amount < 0:
-        return jsonify({"error": "invalid_amount", "message": "amount must be zero or greater"}), 400
-
     if len(currency) != 3 or not currency.isalpha():
         return jsonify({"error": "invalid_currency", "message": "currency must be a 3-letter ISO code"}), 400
-
-    if margin < 0:
-        return jsonify({"error": "invalid_margin", "message": "margin must be zero or greater"}), 400
-
-    if mev_low is not None and mev_low < 0:
-        return jsonify({"error": "invalid_mev_low", "message": "mev_low must be zero or greater"}), 400
-
-    if mev_high is not None and mev_high < 0:
-        return jsonify({"error": "invalid_mev_high", "message": "mev_high must be zero or greater"}), 400
-
-    if mev_low is not None and mev_high is not None and mev_low > mev_high:
-        return jsonify({"error": "invalid_mev_range", "message": "mev_low must be less than or equal to mev_high"}), 400
 
     try:
         calculation = _store_mev_calculation(
             valuation=valuation,
-            amount=amount,
+            **values,
             currency=currency,
             margin=margin,
-            mev_low=mev_low,
-            mev_high=mev_high,
             pricing_request_id=pricing_request_id,
             calculation_method=calculation_method,
             calculated_by=calculated_by,
@@ -2010,6 +1982,9 @@ def sync_valuation_mev_to_attio(valuation_id):
         update_attio_valuation_request_mev(
             valuation_request_id=valuation.crm_valuation_request_id,
             amount=valuation.latest_mev_amount,
+            value_low=valuation.value_low,
+            value_high=valuation.value_high,
+            value_median=valuation.value_median,
             currency=valuation.latest_mev_currency,
             margin=valuation.latest_mev_margin,
             calculated_at=valuation.latest_mev_calculated_at,

@@ -34,7 +34,7 @@ class Config:
         "https://rootlepricing-production-a083.up.railway.app",
     )
     PRICING_API_KEY = os.getenv("PRICING_API_KEY") or os.getenv("ROOTLE_PRICING_API_KEY")
-    PRICING_DEFAULT_MARGIN = os.getenv("PRICING_DEFAULT_MARGIN", "0")
+    PRICING_DEFAULT_MARGIN = os.getenv("PRICING_DEFAULT_MARGIN", "0.5")
     KLAVIYO_API_KEY = os.getenv("KLAVIYO_API_KEY")
     KLAVIYO_API_BASE_URL = os.getenv("KLAVIYO_API_BASE_URL", "https://a.klaviyo.com")
     KLAVIYO_API_REVISION = os.getenv("KLAVIYO_API_REVISION", "2026-04-15")
