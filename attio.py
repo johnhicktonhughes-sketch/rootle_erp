@@ -1,5 +1,6 @@
 import os
 import base64
+import logging
 from functools import lru_cache
 from io import BytesIO
 from datetime import datetime
@@ -8,10 +9,13 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from attribution import ATTRIBUTION_FIELDS
 from database import db
 from models import IntegrationLog, Lead
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
+
+logger = logging.getLogger(__name__)
 
 
 def _normalise_attio_api_base_url(url: str | None) -> str:
@@ -455,6 +459,26 @@ MARKETING_ATTRIBUTION_ATTRIBUTES = (
         "description": "Meta/Facebook click ID captured on form submission.",
     },
     {
+        "title": "Rootle GBRAID",
+        "api_slug": "rootle_gbraid",
+        "description": "Google Ads iOS app-to-web click ID captured on form submission.",
+    },
+    {
+        "title": "Rootle WBRAID",
+        "api_slug": "rootle_wbraid",
+        "description": "Google Ads iOS web-to-app click ID captured on form submission.",
+    },
+    {
+        "title": "Rootle FBC",
+        "api_slug": "rootle_fbc",
+        "description": "Meta _fbc cookie value captured on form submission.",
+    },
+    {
+        "title": "Rootle FBP",
+        "api_slug": "rootle_fbp",
+        "description": "Meta _fbp cookie value captured on form submission.",
+    },
+    {
         "title": "Rootle Landing Page",
         "api_slug": "rootle_landing_page",
         "description": "First landing page captured for this lead.",
@@ -535,12 +559,31 @@ MARKETING_META_TO_ATTIO = {
     "utm_term": "rootle_utm_term",
     "gclid": "rootle_gclid",
     "fbclid": "rootle_fbclid",
+    "gbraid": "rootle_gbraid",
+    "wbraid": "rootle_wbraid",
+    "fbc": "rootle_fbc",
+    "fbp": "rootle_fbp",
     "landing_page": "rootle_landing_page",
     "referrer": "rootle_referrer",
     "first_form_page": "rootle_first_form_page",
     "form_page": "rootle_first_form_page",
     "posthog_distinct_id": "rootle_posthog_distinct_id",
 }
+ATTRIBUTION_ATTIO_SLUGS = {MARKETING_META_TO_ATTIO[field] for field in ATTRIBUTION_FIELDS}
+VALUATION_REQUEST_ATTRIBUTES += tuple(
+    {
+        "title": attribute["title"],
+        "api_slug": attribute["api_slug"],
+        "description": attribute["description"],
+        "type": "text",
+        "is_required": False,
+        "is_unique": False,
+        "is_multiselect": False,
+        "config": {},
+    }
+    for attribute in MARKETING_ATTRIBUTION_ATTRIBUTES
+    if attribute["api_slug"] in ATTRIBUTION_ATTIO_SLUGS
+)
 
 
 class AttioError(Exception):
@@ -706,6 +749,14 @@ def _attio_phone_number_value(phone_number: str) -> dict:
     return value
 
 
+def _attribution_values(attribution: dict | None) -> dict:
+    return {
+        MARKETING_META_TO_ATTIO[field]: str(attribution[field]).strip()
+        for field in ATTRIBUTION_FIELDS
+        if attribution and attribution.get(field) and str(attribution[field]).strip()
+    }
+
+
 def _stage_1_values(
     *,
     name: str,
@@ -713,6 +764,7 @@ def _stage_1_values(
     email: str | None = None,
     posthog_distinct_id: str,
     marketing_consent: bool | None = None,
+    attribution: dict | None = None,
 ) -> dict:
     values = {
         "name": [_attio_name_value(name)],
@@ -725,6 +777,7 @@ def _stage_1_values(
         values["email_addresses"] = [email.strip()]
     if marketing_consent is not None:
         values["rootle_marketing_consent_v2"] = marketing_consent
+    values.update(_attribution_values(attribution))
     return values
 
 
@@ -751,6 +804,7 @@ def _valuation_request_values(
     valuation_guide_url: str | None = None,
     source: str | None = None,
     item_subcategories: dict[str, list[str]] | None = None,
+    attribution: dict | None = None,
 ) -> dict:
     values = {
         "request_title": f"Valuation request {rootle_request_id}",
@@ -781,6 +835,7 @@ def _valuation_request_values(
             if value is not None and str(value).strip()
         }
     )
+    values.update(_attribution_values(attribution))
     return values
 
 
@@ -1430,6 +1485,7 @@ def create_attio_stage_1_lead(
     email: str | None = None,
     posthog_distinct_id: str,
     marketing_consent: bool | None = None,
+    attribution: dict | None = None,
 ) -> str:
     ensure_stage_attribute()
     ensure_marketing_attribution_attributes()
@@ -1443,6 +1499,7 @@ def create_attio_stage_1_lead(
                 email=email,
                 posthog_distinct_id=posthog_distinct_id,
                 marketing_consent=marketing_consent,
+                attribution=attribution,
             )
         }
     }
@@ -1470,9 +1527,17 @@ def get_or_create_attio_stage_1_lead(
     email: str | None = None,
     posthog_distinct_id: str,
     marketing_consent: bool | None = None,
+    attribution: dict | None = None,
 ) -> dict:
     existing_record_id = find_attio_person_by_phone(phone_number)
     if existing_record_id:
+        try:
+            update_attio_person_attribution(
+                person_record_id=existing_record_id,
+                attribution=attribution,
+            )
+        except Exception:
+            logger.exception("Failed to update attribution on Attio person")
         update_attio_person_rootle_stage(
             person_record_id=existing_record_id,
             rootle_stage=ROOTLE_STAGE_CONTACT_DETAILS,
@@ -1504,6 +1569,7 @@ def get_or_create_attio_stage_1_lead(
         email=email,
         posthog_distinct_id=posthog_distinct_id,
         marketing_consent=marketing_consent,
+        attribution=attribution,
     )
     return {"record_id": record_id, "created": True}
 
@@ -1542,7 +1608,10 @@ def create_attio_valuation_request(
     valuation_guide_url: str | None = None,
     source: str | None = None,
     item_subcategories: dict[str, list[str]] | None = None,
+    attribution: dict | None = None,
 ) -> str:
+    if attribution or item_subcategories:
+        ensure_valuation_request_object()
     if _sync_schema_on_write():
         ensure_valuation_request_item_options(item_categories)
     payload = {
@@ -1557,6 +1626,7 @@ def create_attio_valuation_request(
                 valuation_guide_url=valuation_guide_url,
                 source=source,
                 item_subcategories=item_subcategories,
+                attribution=attribution,
             )
         }
     }
@@ -1593,10 +1663,13 @@ def update_attio_valuation_request(
     valuation_guide_url: str | None = None,
     source: str | None = None,
     item_subcategories: dict[str, list[str]] | None = None,
+    attribution: dict | None = None,
 ) -> str | None:
     if not valuation_request_id:
         return valuation_request_id
 
+    if attribution or item_subcategories:
+        ensure_valuation_request_object()
     if _sync_schema_on_write():
         ensure_valuation_request_item_options(item_categories)
     payload = {
@@ -1611,6 +1684,7 @@ def update_attio_valuation_request(
                 valuation_guide_url=valuation_guide_url,
                 source=source,
                 item_subcategories=item_subcategories,
+                attribution=attribution,
             )
         }
     }
@@ -1870,6 +1944,40 @@ def update_attio_person_thank_you_feedback(
     )
     _record_attio_result(
         entity_type="person_thank_you_feedback",
+        payload=payload,
+        response=response,
+    )
+
+    if not response.ok:
+        raise AttioError(f"Attio API returned {response.status_code}: {response.text}")
+
+    return person_record_id
+
+
+@lru_cache(maxsize=1)
+def _ensure_marketing_attributes_once() -> list[dict]:
+    return ensure_marketing_attribution_attributes()
+
+
+def update_attio_person_attribution(
+    *,
+    person_record_id: str,
+    attribution: dict | None,
+) -> str:
+    values = _attribution_values(attribution)
+    if not values:
+        return person_record_id
+
+    _ensure_marketing_attributes_once()
+    payload = {"data": {"values": values}}
+    response = requests.patch(
+        _attio_url(f"objects/{ATTIO_OBJECT_SLUG}/records/{person_record_id}"),
+        json=payload,
+        headers=_headers(),
+        timeout=15,
+    )
+    _record_attio_result(
+        entity_type="person_attribution",
         payload=payload,
         response=response,
     )

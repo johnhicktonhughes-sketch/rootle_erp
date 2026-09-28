@@ -10,6 +10,7 @@ from flask import Blueprint, current_app, jsonify, request
 import requests
 from sqlalchemy import text
 
+from attribution import clean_attribution
 from database import db
 from models import (
     Company,
@@ -132,6 +133,18 @@ def _item_subcategories_payload(payload):
             cleaned[category] = options
 
     return cleaned or None
+
+
+def _valuation_meta(metadata, attribution):
+    if not attribution:
+        return metadata
+    if metadata is None:
+        base = {}
+    elif isinstance(metadata, dict):
+        base = metadata
+    else:
+        base = {"metadata": metadata}
+    return {**base, "attribution": attribution}
 
 
 def _split_customer_name(name):
@@ -1195,6 +1208,7 @@ def submit_stage_1_crm_lead():
     email = _required_string(payload, "email")
     posthog_distinct_id = _required_string(payload, "posthog_distinct_id")
     marketing_consent = _optional_bool_value(payload, "marketing_consent")
+    attribution = clean_attribution(payload.get("attribution"))
 
     missing_fields = [
         field
@@ -1218,6 +1232,7 @@ def submit_stage_1_crm_lead():
             email=email,
             posthog_distinct_id=posthog_distinct_id,
             marketing_consent=marketing_consent,
+            **({"attribution": attribution} if attribution else {}),
         )
     except Exception as exc:
         validation_error = _attio_validation_error_payload(exc)
@@ -1232,6 +1247,8 @@ def submit_stage_1_crm_lead():
     }
     if marketing_consent is not None:
         klaviyo_properties["marketing_consent"] = marketing_consent
+    if attribution:
+        klaviyo_properties.update(attribution)
 
     try:
         from klaviyo import upsert_profile_from_attio_contact
@@ -1302,6 +1319,7 @@ def submit_item_for_valuation():
     valuation_guide_id = _required_string(payload, "valuation_guide_id")
     valuation_guide_url = _required_string(payload, "valuation_guide_url")
     item_subcategories = _item_subcategories_payload(payload)
+    attribution = clean_attribution(payload.get("attribution"))
     normalised_payload = {
         "crm_person_record_id": person_record_id,
         "item_categories": item_categories,
@@ -1312,6 +1330,7 @@ def submit_item_for_valuation():
         "valuation_guide_id": valuation_guide_id,
         "valuation_guide_url": valuation_guide_url,
         "item_subcategories": item_subcategories,
+        "attribution": attribution,
         "metadata": payload.get("metadata"),
     }
 
@@ -1376,6 +1395,7 @@ def submit_item_for_valuation():
                     valuation_guide_url=existing.valuation_guide_url,
                     source=existing.source,
                     item_subcategories=item_subcategories,
+                    **({"attribution": attribution} if attribution else {}),
                 )
                 _sync_person_posthog_distinct_id(
                     person_record_id=existing.crm_person_record_id,
@@ -1433,6 +1453,7 @@ def submit_item_for_valuation():
             valuation_guide_url=valuation_guide_url,
             source=source,
             item_subcategories=item_subcategories,
+            **({"attribution": attribution} if attribution else {}),
         )
     except Exception as exc:
         failed_submission = _record_failed_valuation_request_submission(
@@ -1464,7 +1485,7 @@ def submit_item_for_valuation():
         valuation_guide_id=valuation_guide_id,
         valuation_guide_url=valuation_guide_url,
         source=source,
-        meta=payload.get("metadata"),
+        meta=_valuation_meta(payload.get("metadata"), attribution),
     )
     db.session.add(valuation)
     db.session.commit()
@@ -1699,6 +1720,11 @@ def retry_failed_valuation_request_submission(submission_id):
             valuation_guide_url=normalised_payload.get("valuation_guide_url"),
             source=normalised_payload.get("source"),
             item_subcategories=normalised_payload.get("item_subcategories"),
+            **(
+                {"attribution": normalised_payload["attribution"]}
+                if normalised_payload.get("attribution")
+                else {}
+            ),
         )
     except Exception as exc:
         db.session.rollback()
@@ -1730,7 +1756,10 @@ def retry_failed_valuation_request_submission(submission_id):
         valuation_guide_id=normalised_payload.get("valuation_guide_id"),
         valuation_guide_url=normalised_payload.get("valuation_guide_url"),
         source=normalised_payload.get("source"),
-        meta=normalised_payload.get("metadata"),
+        meta=_valuation_meta(
+            normalised_payload.get("metadata"),
+            normalised_payload.get("attribution"),
+        ),
     )
     db.session.add(valuation)
     db.session.flush()
