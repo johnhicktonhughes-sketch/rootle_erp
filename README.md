@@ -427,3 +427,28 @@ By default the endpoint deletes records from Attio `valuation_requests` and
 `people`, then truncates the ERP application tables with identity reset and
 cascade. Alembic migration state is not part of the SQLAlchemy app metadata and
 is preserved. For a local database-only reset, pass `"skip_attio": true`.
+
+### Slack notifications for new Attio valuation requests
+
+The signed `POST /api/webhooks/attio` endpoint also handles `record.created`.
+Set these variables on the ERP service:
+
+- `SLACK_VALUATION_REQUEST_WEBHOOK_URL`: incoming webhook installed for the target
+  channel. Slack fixes the destination channel when the webhook is installed.
+  Alternatively, set `SLACK_BOT_TOKEN` with `chat:write` and invite the bot to the channel.
+- `SLACK_VALUATION_REQUEST_CHANNEL_ID`: defaults to `C0C87JUBQMS`.
+- `ATTIO_VALUATION_REQUEST_OBJECT_ID`: `fb42faff-3fb7-4afb-8626-e232ce5d1c86`.
+- `ATTIO_WEBHOOK_SECRET`: retain the secret of the existing Attio webhook.
+
+After deploying, update the existing Attio webhook subscription list to include
+`record.created` with `filter: null` alongside the existing `record.deleted`
+subscription. Keep its target URL and signing secret unchanged. The receiver
+filters creation events by object ID, so requests created directly in Attio or
+through any integration are covered. Each message mentions `@channel` and contains the linked person’s phone number
+and Attio record ID. Missing phone numbers display `Not provided`; failed Attio
+lookups return HTTP 503 for retry.
+
+Successful sends are recorded in `integration_logs`, and repeated deliveries are
+suppressed with a PostgreSQL transaction lock. Delivery failures return HTTP 503
+so Attio can retry. A process crash after Slack accepts a message but before the
+success is committed can still produce a duplicate on retry.
