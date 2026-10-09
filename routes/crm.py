@@ -1013,12 +1013,40 @@ def handle_attio_webhook():
     if not _attio_webhook_signature_is_valid(raw_body):
         return jsonify({"error": "invalid_webhook_signature"}), 401
 
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_webhook_payload"}), 400
+    notified_record_ids = []
     deleted_record_ids = []
     deleted_valuations = []
     ignored_events = 0
 
     for event in _attio_webhook_events(payload):
+        if event.get("event_type") == "record.created":
+            # Creation notifications must never match every CRM object.
+            if not current_app.config.get("ATTIO_VALUATION_REQUEST_OBJECT_ID"):
+                return jsonify({"error": "valuation_request_object_not_configured"}), 503
+            if not _attio_event_matches_valuation_request_object(event):
+                ignored_events += 1
+                continue
+            record_id = _attio_deleted_record_id(event)
+            if not record_id or not all(
+                isinstance(event["id"].get(key), str) and event["id"][key]
+                for key in ("workspace_id", "object_id", "record_id")
+            ):
+                ignored_events += 1
+                continue
+            try:
+                from slack_notifications import notify_valuation_request_created
+
+                if notify_valuation_request_created(event["id"]):
+                    notified_record_ids.append(record_id)
+            except (RuntimeError, requests.RequestException):
+                db.session.rollback()
+                current_app.logger.error("Slack valuation notification failed for %s", record_id)
+                return jsonify({"error": "slack_notification_failed"}), 503
+            continue
+
         if event.get("event_type") != "record.deleted":
             ignored_events += 1
             continue
@@ -1046,6 +1074,7 @@ def handle_attio_webhook():
 
     return jsonify(
         {
+            "notified_attio_record_ids": notified_record_ids,
             "deleted_attio_record_ids": deleted_record_ids,
             "deleted_erp_valuations": deleted_valuations,
             "deleted_erp_valuation_count": len(deleted_valuations),
