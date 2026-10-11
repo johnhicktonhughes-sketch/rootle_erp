@@ -11,7 +11,7 @@ from database import db
 from models import IntegrationLog
 
 
-def _related_person_phone(record_id):
+def _related_person_details(record_id):
     from attio import _attio_request
 
     response = _attio_request(
@@ -20,17 +20,26 @@ def _related_person_phone(record_id):
     response.raise_for_status()
     people = response.json()["data"].get("values", {}).get("person", [])
     phones = []
+    names = []
     for person in people:
         person_id = person.get("target_record_id")
         if not person_id:
             continue
         response = _attio_request("GET", f"objects/people/records/{person_id}")
         response.raise_for_status()
-        for phone in response.json()["data"].get("values", {}).get("phone_numbers", []):
+        values = response.json()["data"].get("values", {})
+        for name in values.get("name", []):
+            full_name = (name.get("full_name") or " ".join(
+                part for part in (name.get("first_name"), name.get("last_name")) if part
+            )).strip()
+            if full_name and full_name not in names:
+                names.append(full_name)
+        for phone in values.get("phone_numbers", []):
             number = phone.get("phone_number") or phone.get("original_phone_number")
             if number and number not in phones:
                 phones.append(number)
-    return ", ".join(phones) or "Not provided"
+    return {"name": ", ".join(names) or "Not provided",
+            "phone": ", ".join(phones) or "Not provided"}
 
 
 def _escape_slack(value):
@@ -55,12 +64,14 @@ def notify_valuation_request_created(record_id):
     ).first():
         return False
 
-    phone = _escape_slack(_related_person_phone(record_id))
+    person = _related_person_details(record_id)
+    name = _escape_slack(person["name"])
+    phone = _escape_slack(person["phone"])
     message = {
             "channel": channel,
             "text": (
                 "<!channel> New valuation request created in Attio.\n"
-                f"Phone: {phone}\nRecord ID: {_escape_slack(record_id['record_id'])}"
+                f"Name: {name}\nPhone: {phone}\nRecord ID: {_escape_slack(record_id['record_id'])}"
             ),
             "mrkdwn": True,
             "unfurl_links": False,

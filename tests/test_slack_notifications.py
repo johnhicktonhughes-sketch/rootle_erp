@@ -12,7 +12,7 @@ from models import IntegrationLog
 
 class SlackNotificationTests(unittest.TestCase):
     def setUp(self):
-        self.phone_lookup = patch('slack_notifications._related_person_phone', return_value='+447700900123')
+        self.phone_lookup = patch('slack_notifications._related_person_details', return_value={'name': 'Jane Smith', 'phone': '+447700900123'})
         self.mock_phone = self.phone_lookup.start()
         self.addCleanup(self.phone_lookup.stop)
         self.app = create_app(TestConfig)
@@ -50,6 +50,7 @@ class SlackNotificationTests(unittest.TestCase):
         post.assert_called_once()
         self.assertEqual(post.call_args.kwargs['json']['channel'], 'C0C87JUBQMS')
         self.assertIn('<!channel>', post.call_args.kwargs['json']['text'])
+        self.assertIn('Name: Jane Smith', post.call_args.kwargs['json']['text'])
         self.assertIn('Phone: +447700900123', post.call_args.kwargs['json']['text'])
         self.assertTrue(post.call_args.kwargs['json']['mrkdwn'])
         self.mock_phone.assert_called_once()
@@ -99,19 +100,19 @@ class SlackNotificationTests(unittest.TestCase):
         post.assert_not_called()
 
 
-class RelatedPhoneTests(unittest.TestCase):
+class RelatedPersonTests(unittest.TestCase):
     @patch('attio._attio_request')
     def test_reads_linked_person_phone(self, get):
-        from slack_notifications import _related_person_phone
+        from slack_notifications import _related_person_details
         get.side_effect = [
             Mock(json=lambda: {'data': {'values': {'person': [{'target_record_id': 'person-1'}]}}}),
-            Mock(json=lambda: {'data': {'values': {'phone_numbers': [{'phone_number': '+447700900123'}]}}}),
+            Mock(json=lambda: {'data': {'values': {'name': [{'full_name': 'Jane Smith'}], 'phone_numbers': [{'phone_number': '+447700900123'}]}}}),
         ]
-        self.assertEqual(_related_person_phone({'object_id': 'object-1', 'record_id': 'request-1'}), '+447700900123')
+        self.assertEqual(_related_person_details({'object_id': 'object-1', 'record_id': 'request-1'}), {'name': 'Jane Smith', 'phone': '+447700900123'})
         self.assertEqual(get.call_args.args, ('GET', 'objects/people/records/person-1'))
 
     @patch('attio._attio_request')
     def test_missing_person_or_phone_is_explicit(self, get):
-        from slack_notifications import _related_person_phone
+        from slack_notifications import _related_person_details
         get.return_value = Mock(json=lambda: {'data': {'values': {}}})
-        self.assertEqual(_related_person_phone({'object_id': 'object-1', 'record_id': 'request-1'}), 'Not provided')
+        self.assertEqual(_related_person_details({'object_id': 'object-1', 'record_id': 'request-1'}), {'name': 'Not provided', 'phone': 'Not provided'})
