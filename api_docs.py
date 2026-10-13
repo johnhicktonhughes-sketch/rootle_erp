@@ -1,3 +1,57 @@
+from keel import KEEL_CATEGORIES, LABEL_METHODS
+
+
+KEEL_HANDOVER_REQUEST_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["customer", "photographedItem"],
+    "properties": {
+        "customer": {
+            "type": "object", "additionalProperties": False, "required": ["name"],
+            "properties": {
+                "id": {"type": "string", "minLength": 1, "description": "Defaults to the linked Attio person ID."},
+                "name": {"type": "string", "minLength": 1},
+                "email": {"type": "string", "minLength": 1, "description": "Defaults to the valuation's customer email; supply if absent."},
+                "phone": {"type": "string", "nullable": True},
+                "attioPersonId": {"type": "string", "description": "If supplied, must equal the valuation's linked Attio person ID."},
+            },
+        },
+        "address": {
+            "type": "object", "additionalProperties": False,
+            "description": "Optional corrections to the valuation's UK address. The resulting address needs line1, town and postcode.",
+            "properties": {
+                "line1": {"type": "string", "minLength": 1},
+                "line2": {"type": "string", "nullable": True},
+                "town": {"type": "string", "minLength": 1},
+                "postcode": {"type": "string", "minLength": 1},
+            },
+        },
+        "photographedItem": {
+            "type": "object", "additionalProperties": False, "required": ["category"],
+            "properties": {
+                "category": {"type": "string", "enum": list(KEEL_CATEGORIES)},
+                "photoUrl": {"type": "string", "format": "uri", "description": "Defaults to the stored item photo URL. HTTP(S), fetchable for at least a day."},
+            },
+        },
+        "declaredCategories": {"type": "array", "items": {"type": "string", "enum": list(KEEL_CATEGORIES)}},
+        "labelMethod": {"type": "string", "enum": list(LABEL_METHODS)},
+        "mev": {
+            "type": "object", "additionalProperties": False,
+            "description": "Optional complete override. Defaults to the stored snapshot when all six fields exist; otherwise omitted. Margin is forwarded unchanged without a unit conversion.",
+            "required": ["amount", "low", "high", "currency", "margin", "pricingResultId"],
+            "properties": {
+                "amount": {"type": "number", "minimum": 0},
+                "low": {"type": "number", "description": "Must not exceed high."},
+                "high": {"type": "number"},
+                "currency": {"type": "string", "minLength": 1},
+                "margin": {"type": "number", "minimum": 0},
+                "pricingResultId": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+}
+
+
 API_TITLE = "Rootle ERP API"
 API_VERSION = "0.2.0"
 
@@ -92,6 +146,31 @@ OPENAPI_SPEC = {
     },
     "security": [{"ApiKeyAuth": []}, {"BearerAuth": []}],
     "paths": {
+        "/api/crm/valuation-requests/{valuation_id}/keel-handover": {
+            "post": {
+                "summary": "Hand an accepted valuation request over to Keel",
+                "description": "Call after the customer accepts their indicative offer. Uses the ERP Rootle request ID for Keel idempotency, signs each attempt afresh, and records delivery attempts in integration_logs. It does not create a local postage label. Retry network errors and Keel 5xx responses by calling this endpoint again for the same valuation.",
+                "parameters": [{"name": "valuation_id", "in": "path", "required": True, "schema": {"type": "integer"}}],
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {
+                        "schema": KEEL_HANDOVER_REQUEST_SCHEMA,
+                        "example": {"customer": {"name": "Pat Sender", "email": "pat@example.com", "phone": "+447700900123"}, "photographedItem": {"category": "Jewellery"}, "labelMethod": "qr"},
+                    }},
+                },
+                "responses": {
+                    "200": {"description": "Keel accepted the handover (including repeated deliveries of the same request ID)."},
+                    "400": {"description": "Invalid handover fields; fix and resubmit for the same valuation."},
+                    "401": {"description": "Invalid ERP API key."},
+                    "404": {"description": "Valuation not found."},
+                    "413": {"description": "Handover exceeds 256 KB."},
+                    "422": {"description": "Keel refused the values; inspect the keel response."},
+                    "502": {"description": "Keel rejected the ERP signature or returned an unexpected response."},
+                    "503": {"description": "Missing Keel configuration or unavailable Keel service; inspect retryable."},
+                    "504": {"description": "Keel timeout; retry for the same valuation."},
+                },
+            },
+        },
         "/": {
             "get": {
                 "summary": "Health check",

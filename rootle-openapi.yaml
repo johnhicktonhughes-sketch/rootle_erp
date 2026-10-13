@@ -1,0 +1,239 @@
+openapi: 3.1.0
+info:
+  title: Keel handover API for Rootle
+  version: 1.0.0
+servers:
+  - url: "{baseUrl}"
+    variables:
+      baseUrl:
+        default: https://keel.example
+        description: The environment's base URL, sent by Keel.
+security:
+  - rootleSignature: []
+paths:
+  /rootle/handover:
+    post:
+      operationId: handOverBox
+      summary: Hand a customer's box over to Keel
+      parameters:
+        - name: x-rootle-timestamp
+          in: header
+          required: true
+          description: The time of sending as Unix seconds, within 5 minutes of Keel's clock.
+          schema: { type: string, pattern: "^[0-9]+$" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Handover" }
+            example:
+              requestId: req_8f2c
+              attioValuationRequestId: vr_123
+              customer:
+                {
+                  id: cust_42,
+                  name: Pat Sender,
+                  email: pat@example.com,
+                  phone: "+447700900123",
+                  attioPersonId: p_789,
+                }
+              address:
+                {
+                  line1: 1 Boar Lane,
+                  line2: null,
+                  town: Leeds,
+                  postcode: LS1 5DA,
+                }
+              photographedItem:
+                { category: Watches, photoUrl: "https://example.com/photo.jpg" }
+              declaredCategories: [Watches, Jewellery]
+              mev:
+                {
+                  amount: 400,
+                  low: 320,
+                  high: 480,
+                  currency: GBP,
+                  margin: 45,
+                  pricingResultId: pr_1,
+                }
+              labelMethod: print_at_home
+      responses:
+        "200":
+          {
+            description: Accepted,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+        "400":
+          {
+            description: Invalid,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+        "401":
+          {
+            description: Rejected,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+        "413":
+          {
+            description: Too large,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+        "422":
+          {
+            description: Refused,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+        "500":
+          {
+            description: Error,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Answer" } },
+              },
+          }
+components:
+  securitySchemes:
+    rootleSignature:
+      type: apiKey
+      in: header
+      name: x-rootle-signature
+      description: Lowercase hex HMAC-SHA256 of the x-rootle-timestamp value, a full stop, then the raw body.
+  schemas:
+    Handover:
+      type: object
+      required:
+        [
+          requestId,
+          attioValuationRequestId,
+          customer,
+          address,
+          photographedItem,
+        ]
+      properties:
+        requestId:
+          {
+            type: string,
+            minLength: 1,
+            description: "Your id for this handover; one box per requestId.",
+          }
+        attioValuationRequestId:
+          {
+            type: string,
+            minLength: 1,
+            description: "Attio's record id for the valuation request.",
+          }
+        customer:
+          type: object
+          required: [id, name, email, attioPersonId]
+          properties:
+            id:
+              {
+                type: string,
+                minLength: 1,
+                description: Your own id for the person.,
+              }
+            name: { type: string, minLength: 1 }
+            email: { type: string, minLength: 1 }
+            phone: { type: [string, "null"] }
+            attioPersonId:
+              {
+                type: string,
+                minLength: 1,
+                description: "Attio's record id for the person.",
+              }
+        address:
+          type: object
+          description: A UK address.
+          required: [line1, town, postcode]
+          properties:
+            line1: { type: string, minLength: 1 }
+            line2: { type: [string, "null"] }
+            town: { type: string, minLength: 1 }
+            postcode: { type: string, minLength: 1 }
+        photographedItem:
+          type: object
+          required: [category, photoUrl]
+          properties:
+            category: { $ref: "#/components/schemas/CategoryName" }
+            photoUrl:
+              {
+                type: string,
+                format: uri,
+                description: "http or https; must stay fetchable for a day.",
+              }
+        declaredCategories:
+          type: array
+          items: { $ref: "#/components/schemas/CategoryName" }
+        mev:
+          type: object
+          description: The indicative valuation. All six fields, or leave it out.
+          required: [amount, low, high, currency, margin, pricingResultId]
+          properties:
+            amount: { type: number, minimum: 0 }
+            low: { type: number, description: At most high. }
+            high: { type: number }
+            currency: { type: string, minLength: 1 }
+            margin: { type: number, minimum: 0 }
+            pricingResultId: { type: string, minLength: 1 }
+        labelMethod:
+          type: string
+          enum: [qr, print_at_home, posted]
+          description: Optional; the office chooses if it is left out.
+    CategoryName:
+      type: string
+      description: Matched exactly, including case and "&".
+      enum:
+        - Jewellery
+        - Coins & Currency
+        - War & Militaria
+        - Camera & Optical
+        - Metals
+        - Watches
+        - Timekeeping
+        - Sporting Memorabilia
+        - Collectibles & Memorabilia
+        - Decorative Arts
+        - Housewares & Kitchen
+        - Furniture
+        - Fashion
+        - Toys & Games
+        - Books
+        - Electronic Devices
+        - Other
+    Answer:
+      type: object
+      required: [status]
+      properties:
+        status:
+          {
+            type: string,
+            enum: [accepted, invalid, rejected, too large, refused, error],
+          }
+        errors:
+          {
+            type: array,
+            items: { type: string },
+            description: "Sent with invalid: every field to fix.",
+          }
+        message: { type: string, description: Sent with every other refusal. }

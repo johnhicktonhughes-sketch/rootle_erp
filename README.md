@@ -2,6 +2,69 @@
 
 A lightweight ERP backbone for CRM, pricing, website data, and Slack integration.
 
+### Keel box handover
+
+Call `POST /api/crm/valuation-requests/{valuation_id}/keel-handover` after the
+customer accepts their indicative offer and requests postage. Use the usual ERP
+`X-API-Key` or bearer authentication.
+
+```json
+{
+  "customer": {
+    "name": "Pat Sender",
+    "email": "pat@example.com",
+    "phone": "+447700900123"
+  },
+  "photographedItem": {"category": "Jewellery"},
+  "declaredCategories": ["Jewellery", "Coins & Currency"],
+  "labelMethod": "qr"
+}
+```
+
+Configure `KEEL_HANDOVER_URL` (the full environment-specific `/rootle/handover`
+URL) and `KEEL_API_KEY` (Keel's shared HMAC signing secret) in `.env` or the
+deployment environment. The key is used to compute `x-rootle-signature`; it is
+never sent as an API-key header. Staging is configured locally; deployment
+variables must be set separately.
+
+The ERP supplies `requestId` from `rootle_request_id`, `attioValuationRequestId`
+from the linked Attio valuation, and `customer.attioPersonId` from the linked
+Attio person. These links must exist. `customer.id` defaults to the Attio person
+ID; supply your own stable customer ID if needed. The caller supplies the
+customer's name and optionally their phone number. Email defaults to the stored
+valuation email, but must be supplied if absent. Optional `address` fields
+(`line1`, `line2`, `town`, `postcode`) override stored address values; the resulting
+address needs line1, town and postcode and must be in the UK. Optional
+`photographedItem.photoUrl` overrides the stored photo URL. The photo must remain
+fetchable for at least a day; the ERP validates the URL but does not fetch it or
+check its expiry.
+
+Use an exact Keel category from `/docs` for `photographedItem.category` and any
+`declaredCategories`. ERP gold/silver/coins categories are not mapped automatically
+because gold and silver may represent jewellery or metals. `labelMethod` may be
+`qr`, `print_at_home`, or `posted`; omit it to let Keel choose.
+
+The latest MEV is included when amount, low, high, currency, margin, and pricing
+request ID are all available; incomplete snapshots are omitted. A `mev` object
+can override it but must contain all six Keel fields (`amount`, `low`, `high`,
+`currency`, `margin`, `pricingResultId`). Margins are forwarded unchanged: the ERP
+snapshot stores a fraction, while the Keel example uses `45` without specifying
+units. Confirm Keel's margin units before relying on that value downstream.
+
+Success returns `200` with `status: "accepted"`, `request_id`, `valuation_id`, and
+the Keel answer. Every outbound attempt is recorded in `integration_logs` with
+`system=keel` and `entity_type=valuation_handover`. The endpoint does not change
+valuation stages or create local postage labels.
+
+Retry responses with `retryable: true` by repeating the call for the same
+valuation. There are no automatic retries. Each attempt is freshly signed, and
+Keel guarantees one box per ERP request ID, even after an ambiguous timeout or
+failure to save the local audit log. Corrections can be sent under the same ID.
+Keel `400`, `413`, and `422` responses retain their HTTP codes and answer; Keel
+`401` becomes ERP `502` (signing configuration), upstream `5xx` and connection
+errors become `503`, and timeouts become `504`. The outbound JSON is limited to
+256 KB and redirect responses are not followed.
+
 ## What is included
 
 - Flask API scaffold in `app.py`

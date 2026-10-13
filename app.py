@@ -6,6 +6,7 @@ from api_docs import DOCS_HTML, OPENAPI_SPEC, SWAGGER_UI_HTML
 from config import Config
 from database import db
 from routes.crm import crm_bp
+from routes.keel import keel_bp
 
 
 def _request_api_key():
@@ -48,6 +49,7 @@ def create_app(config_class=Config):
     db.init_app(app)
 
     app.register_blueprint(crm_bp, url_prefix="/api")
+    app.register_blueprint(keel_bp, url_prefix="/api")
 
     @app.before_request
     def require_api_key():
